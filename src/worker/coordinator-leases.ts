@@ -6,7 +6,7 @@
  * Every function takes the store explicitly; the Durable Object class in
  * coordinator.ts wires them to HTTP routes.
  */
-import { normalizePaths } from "../shared/paths";
+import { leasesOverlap, normalizePaths } from "../shared/paths";
 import type { LeaseConflict } from "../shared/types";
 import { HttpProblem, json, readBody, requireStringArray } from "./http";
 import {
@@ -71,22 +71,28 @@ export function acquireLeases(
     const now = Date.now();
     const expiresAt = now + ttlSeconds * 1_000;
 
-    const conflicts: LeaseConflict[] = paths.flatMap((path) =>
-      store
-        .sql<ConflictRow>(
-          `SELECT l.path, l.changeset, l.acquired_at, l.expires_at, c.agent
-           FROM leases l JOIN changesets c ON c.id = l.changeset
-           WHERE l.path = ? AND l.changeset <> ?`,
-          path,
-          changesetId,
-        )
-        .map((row) => ({
-          path: row.path,
-          changeset: row.changeset,
-          agent: row.agent,
-          expiresAt: row.expires_at,
-        })),
+    // Overlap semantics: file leases conflict on equality, directory leases
+    // (trailing `/`) conflict with anything they cover. Lease counts per
+    // workspace are small, so we scan the live set in memory.
+    const otherLeases = store.sql<ConflictRow>(
+      `SELECT l.path, l.changeset, l.acquired_at, l.expires_at, c.agent
+       FROM leases l JOIN changesets c ON c.id = l.changeset
+       WHERE l.changeset <> ?`,
+      changesetId,
     );
+    const seen = new Set<string>();
+    const conflicts: LeaseConflict[] = [];
+    for (const row of otherLeases) {
+      if (seen.has(row.path)) continue;
+      if (!paths.some((path) => leasesOverlap(path, row.path))) continue;
+      seen.add(row.path);
+      conflicts.push({
+        path: row.path,
+        changeset: row.changeset,
+        agent: row.agent,
+        expiresAt: row.expires_at,
+      });
+    }
 
     if (conflicts.length > 0) {
       store.emit("lease.denied", {

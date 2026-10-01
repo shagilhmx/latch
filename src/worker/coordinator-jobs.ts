@@ -7,7 +7,7 @@
  * time, so at most one job is ever `running` — the serialization point for
  * every writer of `main`.
  */
-import { normalizePaths } from "../shared/paths";
+import { leaseCovers, normalizePaths } from "../shared/paths";
 import type { ClaimedJob } from "../shared/types";
 import { HttpProblem, json, readBody, requireString, requireStringArray } from "./http";
 import { ACTIVE_STATUSES, toJob, type ChangesetRow, type JobRow } from "./coordinator-types";
@@ -70,13 +70,10 @@ export function enqueueJob(
   via: string,
 ): JobRow {
   if (paths !== null) {
-    const violations = paths.filter((path) => {
-      const rows = store.sql<{ changeset: string }>(
-        "SELECT changeset FROM leases WHERE path = ?",
-        path,
-      );
-      return rows[0]?.changeset !== changesetId;
-    });
+    const held = store
+      .sql<{ path: string }>("SELECT path FROM leases WHERE changeset = ?", changesetId)
+      .map((row) => row.path);
+    const violations = paths.filter((path) => !held.some((lease) => leaseCovers(lease, path)));
     if (violations.length > 0) {
       store.emit("changeset.blocked", { changeset: changesetId, violations });
       throw new HttpProblem(
@@ -215,13 +212,10 @@ export function verifyJob(
       throw new HttpProblem(400, "invalid_path", (error as Error).message);
     }
 
-    const violations = paths.filter((path) => {
-      const rows = store.sql<{ changeset: string }>(
-        "SELECT changeset FROM leases WHERE path = ?",
-        path,
-      );
-      return rows[0]?.changeset !== job.changeset;
-    });
+    const held = store
+      .sql<{ path: string }>("SELECT path FROM leases WHERE changeset = ?", job.changeset)
+      .map((row) => row.path);
+    const violations = paths.filter((path) => !held.some((lease) => leaseCovers(lease, path)));
 
     if (violations.length > 0) {
       const now = Date.now();
