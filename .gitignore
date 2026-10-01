@@ -5,3 +5,5 @@ worker-configuration.d.ts
 .dev.vars
 *.local
 .freebuff/
+test-results/
+playwright-report/

@@ -1,6 +1,7 @@
 import { handleApi } from "./api";
 import { handleArtifactsEvent } from "./events";
 import { Coordinator } from "./coordinator";
+import { openapiSpec } from "./openapi";
 import { AgentSandbox } from "../sessions/sandbox";
 import { Outbound } from "../sessions/outbound";
 
@@ -9,6 +10,10 @@ export { Coordinator, AgentSandbox, Outbound };
 export default {
   async fetch(request, env): Promise<Response> {
     const { pathname } = new URL(request.url);
+
+    if (pathname === "/api/openapi.json") {
+      return Response.json(openapiSpec);
+    }
 
     if (pathname.startsWith("/api/")) {
       return handleApi(request, env);

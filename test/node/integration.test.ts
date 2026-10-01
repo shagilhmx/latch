@@ -6,7 +6,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sessionRepoName } from "../../src/worker/artifacts.ts";
 import { runOnce } from "../../src/integration/runner.ts";
 import { LocalSessionRuntime } from "../../src/sessions/local.ts";
-import { abortSession, finishSession, startSession } from "../../src/sessions/session.ts";
+import { abortSession, awaitIntegration, finishSession, startSession } from "../../src/sessions/session.ts";
+import { LatchClient } from "../../src/sdk/index.ts";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 const WORKSPACE = "e2e";
@@ -380,5 +381,151 @@ describe("integration runner against a real git workspace", () => {
     expect(message).toContain("Lease-Paths: src/util.ts");
 
     await runtime.cleanup();
+  });
+
+  it("recovers from a rejection: agent fixes, re-readies, merges (retry flow)", async () => {
+    const runtime = new LocalSessionRuntime();
+    const forkRemote = join(dir, "fork5.git");
+    git(["clone", "--bare", "--quiet", mainRemote, forkRemote]);
+    const options = {
+      baseUrl: base,
+      workspace: WORKSPACE,
+      agent: "ada",
+      intent: "Retry the rejected change",
+      claimPaths: ["src/fix.ts"],
+      forkRemote,
+      runtime,
+    };
+
+    const started = await startSession(options);
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    const session = { ...options, changesetId: started.changeset.id, baseSha: started.baseSha };
+
+    // The agent edits its leased file AND smuggles a change outside its scope.
+    await runtime.run(
+      [
+        "sh",
+        "-c",
+        "printf 'export const fix = 1;\\n' > src/fix.ts && printf '\\nsmuggled by ada\\n' >> README.md",
+      ],
+      { cwd: started.workDir },
+    );
+
+    // First submission under-reports: it declares only its leased file while
+    // the smuggled README edit is really in the commit — exactly the case
+    // the runner's git-side verify exists to catch.
+    const sha = await runtime.commitAll("agent: retry the rejected change", {
+      name: "ada",
+      email: "ada@latch.local",
+    });
+    await runtime.push(forkRemote);
+    const queued = await post(`/changesets/${started.changeset.id}/ready`, {
+      ref: sha,
+      touchedPaths: ["src/fix.ts"],
+    });
+    expect(queued.status).toBe(202);
+
+    // The agent waits for its verdict while the runner processes the queue.
+    const waiting = awaitIntegration({
+      baseUrl: base,
+      workspace: WORKSPACE,
+      changesetId: started.changeset.id,
+      timeoutMs: 15_000,
+    });
+    const rejected = await runOnce({ baseUrl: base, workspace: WORKSPACE });
+    expect(rejected.status).toBe("rejected");
+    const outcome = await waiting;
+    expect(outcome.status).toBe("rejected");
+    expect(outcome.reason).toContain("README.md");
+
+    // Leases are retained — the agent reverts the smuggle inside its own
+    // fork and re-submits the SAME changeset; no new claim is needed.
+    await runtime.run(["sh", "-c", "git checkout HEAD~1 -- README.md"], {
+      cwd: started.workDir,
+    });
+    const second = await finishSession(session);
+    expect(second.ready.status).toBe(202);
+    expect(second.touchedPaths).toEqual(["src/fix.ts"]);
+
+    const retryWait = awaitIntegration({
+      baseUrl: base,
+      workspace: WORKSPACE,
+      changesetId: started.changeset.id,
+      timeoutMs: 15_000,
+    });
+    const merged = await runOnce({ baseUrl: base, workspace: WORKSPACE });
+    expect(merged.status).toBe("merged");
+    const retryOutcome = await retryWait;
+    expect(retryOutcome.status).toBe("merged");
+    expect(retryOutcome.mergedSha).toBeTruthy();
+
+    // main gained the fix, never the smuggle.
+    expect(git(["--git-dir", mainRemote, "show", "HEAD:README.md"])).not.toContain(
+      "smuggled by ada",
+    );
+    expect(git(["--git-dir", mainRemote, "log", "-1", "--format=%B"])).toContain(
+      "Latch-Agent: ada",
+    );
+
+    await runtime.cleanup();
+  });
+
+  it("drives a full claim/heartbeat/release/abort lifecycle through the SDK", async () => {
+    const client = new LatchClient({ baseUrl: base, workspace: WORKSPACE });
+
+    const created = await client.createChangeset("sdk-agent", "SDK lifecycle");
+    expect(created.status).toBe(201);
+    const id = created.body.changeset.id;
+
+    // File + directory claim in one all-or-nothing call.
+    const claimed = await client.claim(id, ["src/sdk.ts", "docs/"]);
+    expect(claimed.status).toBe(200);
+    expect(claimed.body.granted).toEqual(["docs/", "src/sdk.ts"]);
+
+    // An overlapping rival is refused with the holder's identity.
+    const rival = await client.createChangeset("sdk-rival", "Wants the same scope");
+    const denied = await client.claim(rival.body.changeset.id, ["src/sdk.ts"]);
+    expect(denied.status).toBe(409);
+    expect(denied.body.conflicts?.[0]?.agent).toBe("sdk-agent");
+
+    const beat = await client.heartbeat(id, { ttlSeconds: 600 });
+    expect(beat.status).toBe(200);
+    expect(beat.body.extended).toEqual(["docs/", "src/sdk.ts"]);
+
+    const detail = await client.changesetDetail(id);
+    expect(detail.body.leases.map((l: { path: string }) => l.path)).toEqual([
+      "docs/",
+      "src/sdk.ts",
+    ]);
+
+    const events = await client.events();
+    expect(events.body.events.some((e) => e.type === "lease.acquired")).toBe(true);
+
+    const snap = await client.snapshot();
+    expect(snap.body.leases.some((l) => l.agent === "sdk-agent")).toBe(true);
+
+    // The live stream connects and pushes a snapshot immediately.
+    const socket = client.openStream();
+    const message = (await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("stream timeout")), 5_000);
+      socket.addEventListener("message", (event) => {
+        clearTimeout(timer);
+        resolve(JSON.parse(String(event.data)) as { type: string });
+      });
+      socket.addEventListener("error", () => {
+        clearTimeout(timer);
+        reject(new Error("stream error"));
+      });
+    })) as { type: string };
+    expect(message.type).toBe("snapshot");
+    socket.close();
+
+    const released = await client.release(id, ["docs/"]);
+    expect(released.body.released).toEqual(["docs/"]);
+
+    const aborted = await client.abort(id);
+    expect(aborted.body.changeset.status).toBe("aborted");
+    await client.abort(rival.body.changeset.id);
   });
 });

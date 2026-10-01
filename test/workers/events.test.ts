@@ -62,7 +62,6 @@ describe("handleArtifactsEvent", () => {
   });
 
   it("ignores non-push events and foreign repos", async () => {
-    const w = workspaceApi();
     expect(await handleArtifactsEvent({ type: "cf.artifacts.repo.created" }, env)).toBe("ignored");
     expect(await handleArtifactsEvent(pushEvent("unrelated-repo"), env)).toBe("ignored");
     expect(await handleArtifactsEvent("not an object", env)).toBe("invalid");

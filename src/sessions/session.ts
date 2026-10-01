@@ -134,6 +134,11 @@ export async function startSession(options: StartSessionOptions): Promise<StartS
 /**
  * Commit the agent's work, push it to the session fork, and ready the
  * changeset (advisory lease check; the runner re-verifies from git).
+ *
+ * Safe to call again after a rejection: rejected changesets keep their
+ * leases and fork, so the agent fixes its work in the same `workDir` and
+ * re-invokes `finishSession` — that re-readies the same changeset and a new
+ * integration job is queued (pair it with `awaitIntegration`).
  */
 export async function finishSession(
   options: StartSessionOptions & { changesetId: string; baseSha: string },
@@ -165,6 +170,73 @@ export async function finishSession(
       error: body.error ?? body.message,
     },
   };
+}
+
+/** Terminal states an integration can reach for a changeset. */
+export type IntegrationOutcomeStatus = "merged" | "rejected" | "aborted";
+
+export interface IntegrationOutcome {
+  status: IntegrationOutcomeStatus;
+  /** Merge commit on main, when the integration succeeded. */
+  mergedSha: string | null;
+  /** Rejection/abort reason as recorded on the newest job, when any. */
+  reason: string | null;
+  job: IntegrationJob | null;
+}
+
+const INTEGRATION_TERMINAL: ReadonlySet<string> = new Set([
+  "merged",
+  "rejected",
+  "aborted",
+]);
+
+/**
+ * Wait for a changeset's integration to reach a terminal state. Call this
+ * after `finishSession`: it polls the changeset detail (queued/integrating
+ * are in progress) and returns the outcome the agent should react to —
+ * `merged` means done, `rejected` means fix within your leases and call
+ * `finishSession` again.
+ */
+export async function awaitIntegration(options: {
+  baseUrl: string;
+  workspace: string;
+  changesetId: string;
+  /** Default 30s; throw if integration does not finish in time. */
+  timeoutMs?: number;
+  /** Poll cadence, default 150ms. */
+  pollMs?: number;
+}): Promise<IntegrationOutcome> {
+  const api = { baseUrl: options.baseUrl, workspace: options.workspace };
+  const deadline = Date.now() + (options.timeoutMs ?? 30_000);
+  const pollMs = options.pollMs ?? 150;
+  let lastSeen = "unknown";
+
+  while (Date.now() < deadline) {
+    const response = await call(api, `/changesets/${options.changesetId}`);
+    if (response.ok) {
+      const body = (await response.json()) as {
+        changeset: Changeset;
+        jobs: IntegrationJob[];
+      };
+      const status = body.changeset.status;
+      lastSeen = status;
+      if (INTEGRATION_TERMINAL.has(status)) {
+        const job = body.jobs[0] ?? null; // newest first
+        return {
+          status: status as IntegrationOutcomeStatus,
+          mergedSha: job?.mergedSha ?? null,
+          reason: job?.reason ?? null,
+          job,
+        };
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+
+  throw new Error(
+    `Integration for changeset ${options.changesetId} did not finish ` +
+      `within ${options.timeoutMs ?? 30_000}ms (last status: ${lastSeen})`,
+  );
 }
 
 /** Release everything a session holds (leases + changeset) and clean the clone. */

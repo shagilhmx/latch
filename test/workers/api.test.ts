@@ -15,6 +15,26 @@ describe("worker routing", () => {
     const response = await SELF.fetch("https://latch.test/api/nope");
     expect(response.status).toBe(404);
   });
+
+  it("serves the OpenAPI description of the coordination API", async () => {
+    const response = await SELF.fetch("https://latch.test/api/openapi.json");
+    expect(response.status).toBe(200);
+    const spec = (await response.json()) as {
+      openapi: string;
+      paths: Record<string, Record<string, unknown>>;
+      components: { schemas: Record<string, unknown> };
+    };
+    expect(spec.openapi).toBe("3.1.0");
+    expect(Object.keys(spec.paths)).toContain(
+      "/api/workspaces/{workspace}/changesets/{id}/leases",
+    );
+    expect(Object.keys(spec.paths)).toContain(
+      "/api/workspaces/{workspace}/integration/{seq}/verify",
+    );
+    expect(Object.keys(spec.components.schemas)).toEqual(
+      expect.arrayContaining(["Changeset", "Lease", "Job", "WorkspaceSnapshot"]),
+    );
+  });
 });
 
 describe("workspace snapshot", () => {

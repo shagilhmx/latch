@@ -7,12 +7,37 @@ import {
   workspaceRepoExists,
   workspaceRepoName,
 } from "./artifacts";
+import { handleAuth, resolveActor } from "./auth";
 import { HttpProblem, apiError, json, readBody, requireString } from "./http";
 
 const WORKSPACE_ROUTE = /^\/api\/workspaces\/([^/]+)(\/.*)?$/;
 
 function coordinatorFor(env: Env, workspace: string): DurableObjectStub {
   return env.COORDINATOR.get(env.COORDINATOR.idFromName(workspace));
+}
+
+/**
+ * Identity header for the Coordinator: resolved from the session cookie by
+ * the Worker and OVERWRITTEN on every forwarded request, so a client can
+ * never forge `x-latch-user` by sending it directly.
+ */
+async function actorHeaders(
+  request: Request,
+  env: Env,
+  base?: HeadersInit,
+): Promise<Headers> {
+  const headers = new Headers(base ?? undefined);
+  headers.delete("x-latch-user");
+  const { actor } = await resolveActor(request, env);
+  if (actor !== null) {
+    headers.set("x-latch-user", JSON.stringify(actor));
+  }
+  return headers;
+}
+
+/** Same guarantee as `actorHeaders`, but for whole forwarded requests. */
+async function withActor(request: Request, env: Env): Promise<Request> {
+  return new Request(request, { headers: await actorHeaders(request, env) });
 }
 
 async function forwardToCoordinator(
@@ -24,7 +49,8 @@ async function forwardToCoordinator(
 ): Promise<Response> {
   const url = new URL(request.url);
   const target = `${url.origin}/api/workspaces/${encodeURIComponent(workspace)}${path}`;
-  return coordinatorFor(env, workspace).fetch(target, init);
+  const headers = await actorHeaders(request, env, init?.headers);
+  return coordinatorFor(env, workspace).fetch(target, { ...init, headers });
 }
 
 function postJson(path: string, body: unknown): RequestInit {
@@ -258,6 +284,9 @@ async function agentRoute(
 
 /** API router: workspace-owned routes handled here, the rest by the DO. */
 export async function handleApi(request: Request, env: Env): Promise<Response> {
+  const authResponse = await handleAuth(request, env);
+  if (authResponse !== null) return authResponse;
+
   const url = new URL(request.url);
   const match = WORKSPACE_ROUTE.exec(url.pathname);
   if (match === null) {
@@ -282,7 +311,13 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     ) {
       return await agentRoute(request, env, segments[1] ?? "", segments[3] ?? "");
     }
-    return await coordinatorFor(env, workspace).fetch(request);
+    // WebSocket upgrades must be forwarded as the ORIGINAL request —
+    // reconstructing it drops the upgrade state (and the stream route does
+    // not require an actor).
+    if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
+      return await coordinatorFor(env, workspace).fetch(request);
+    }
+    return await coordinatorFor(env, workspace).fetch(await withActor(request, env));
   } catch (error) {
     if (error instanceof HttpProblem) {
       return apiError(error.status, error.code, error.message, error.extra);
