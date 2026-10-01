@@ -76,6 +76,36 @@ npm test              # vitest run (workers pool + node)
 npm run typecheck     # wrangler types + tsc (worker and UI configs)
 ```
 
+### Agent SDK
+
+Real agent frameworks integrate through the SDK in [`src/sdk/`](src/sdk/):
+
+```ts
+import { LatchClient, startSession, finishSession, awaitIntegration } from "latch/sdk";
+
+// Low-level: one client per workspace.
+const client = new LatchClient({ baseUrl, workspace: "demo" });
+const { changeset } = await client.createChangeset("ada", "Rename loader");
+await client.claim(changeset.id, ["src/"]);        // directory claim
+await client.heartbeat(changeset.id);              // keep it alive
+
+// High-level: the full agent loop over a SessionRuntime.
+const started = await startSession({ baseUrl, workspace: "demo", agent: "ada", … });
+const first = await finishSession({ …, changesetId: started.changeset.id, baseSha: started.baseSha });
+const verdict = await awaitIntegration({ baseUrl, workspace: "demo", changesetId: started.changeset.id });
+if (verdict.status === "rejected") {
+  // leases are still yours — fix inside your scope and call finishSession again
+}
+```
+
+### API reference
+
+`GET /api/openapi.json` serves an OpenAPI 3.1 description of every
+coordination endpoint (claim/heartbeat/release/ready, integration queue,
+events, WebSocket stream), generated-checked against the routes in
+[`src/worker/openapi.ts`](src/worker/openapi.ts). Point any OpenAPI viewer
+or client generator at it.
+
 ### Deploy
 
 ```sh
@@ -121,6 +151,7 @@ local git and the agent-execution route answers `503`.
 | `src/worker/{api,artifacts,events,http}.ts` | REST routes, Artifacts naming, queue consumer → integration, HTTP helpers |
 | `src/integration/{runner,git,cli}.ts` | Trusted integration runner: git-side verify → `--no-ff` merge → push |
 | `src/sessions/{runtime,local,session,sandbox,outbound}.ts` | Session orchestration; local git runtime + `AgentSandbox` container runtime |
+| `src/sdk/` | Agent SDK: typed HTTP client + session orchestration re-exports |
 | `src/ui/` | React SPA (lease map, changesets, merge stream) with WebSocket store |
 | `container/` | `Dockerfile` (integration runner) + `Agent.Dockerfile` (agent CLI image) |
 | `scripts/demo.ts` | The 3-agent scripted demo |

@@ -20,6 +20,7 @@
     "src/shared",
     "src/integration",
     "src/sessions",
+    "src/sdk",
     "scripts",
     "test",
     "worker-configuration.d.ts"

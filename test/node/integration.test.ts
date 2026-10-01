@@ -7,6 +7,7 @@ import { sessionRepoName } from "../../src/worker/artifacts.ts";
 import { runOnce } from "../../src/integration/runner.ts";
 import { LocalSessionRuntime } from "../../src/sessions/local.ts";
 import { abortSession, awaitIntegration, finishSession, startSession } from "../../src/sessions/session.ts";
+import { LatchClient } from "../../src/sdk/index.ts";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 const WORKSPACE = "e2e";
@@ -468,5 +469,63 @@ describe("integration runner against a real git workspace", () => {
     );
 
     await runtime.cleanup();
+  });
+
+  it("drives a full claim/heartbeat/release/abort lifecycle through the SDK", async () => {
+    const client = new LatchClient({ baseUrl: base, workspace: WORKSPACE });
+
+    const created = await client.createChangeset("sdk-agent", "SDK lifecycle");
+    expect(created.status).toBe(201);
+    const id = created.body.changeset.id;
+
+    // File + directory claim in one all-or-nothing call.
+    const claimed = await client.claim(id, ["src/sdk.ts", "docs/"]);
+    expect(claimed.status).toBe(200);
+    expect(claimed.body.granted).toEqual(["docs/", "src/sdk.ts"]);
+
+    // An overlapping rival is refused with the holder's identity.
+    const rival = await client.createChangeset("sdk-rival", "Wants the same scope");
+    const denied = await client.claim(rival.body.changeset.id, ["src/sdk.ts"]);
+    expect(denied.status).toBe(409);
+    expect(denied.body.conflicts?.[0]?.agent).toBe("sdk-agent");
+
+    const beat = await client.heartbeat(id, { ttlSeconds: 600 });
+    expect(beat.status).toBe(200);
+    expect(beat.body.extended).toEqual(["docs/", "src/sdk.ts"]);
+
+    const detail = await client.changesetDetail(id);
+    expect(detail.body.leases.map((l: { path: string }) => l.path)).toEqual([
+      "docs/",
+      "src/sdk.ts",
+    ]);
+
+    const events = await client.events();
+    expect(events.body.events.some((e) => e.type === "lease.acquired")).toBe(true);
+
+    const snap = await client.snapshot();
+    expect(snap.body.leases.some((l) => l.agent === "sdk-agent")).toBe(true);
+
+    // The live stream connects and pushes a snapshot immediately.
+    const socket = client.openStream();
+    const message = (await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("stream timeout")), 5_000);
+      socket.addEventListener("message", (event) => {
+        clearTimeout(timer);
+        resolve(JSON.parse(String(event.data)) as { type: string });
+      });
+      socket.addEventListener("error", () => {
+        clearTimeout(timer);
+        reject(new Error("stream error"));
+      });
+    })) as { type: string };
+    expect(message.type).toBe("snapshot");
+    socket.close();
+
+    const released = await client.release(id, ["docs/"]);
+    expect(released.body.released).toEqual(["docs/"]);
+
+    const aborted = await client.abort(id);
+    expect(aborted.body.changeset.status).toBe("aborted");
+    await client.abort(rival.body.changeset.id);
   });
 });
