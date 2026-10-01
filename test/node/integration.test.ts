@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sessionRepoName } from "../../src/worker/artifacts.ts";
 import { runOnce } from "../../src/integration/runner.ts";
 import { LocalSessionRuntime } from "../../src/sessions/local.ts";
-import { abortSession, finishSession, startSession } from "../../src/sessions/session.ts";
+import { abortSession, awaitIntegration, finishSession, startSession } from "../../src/sessions/session.ts";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 const WORKSPACE = "e2e";
@@ -378,6 +378,94 @@ describe("integration runner against a real git workspace", () => {
     expect(message).toContain("Latch-Agent: linus");
     expect(message).toContain("Intent: Add a utility module");
     expect(message).toContain("Lease-Paths: src/util.ts");
+
+    await runtime.cleanup();
+  });
+
+  it("recovers from a rejection: agent fixes, re-readies, merges (retry flow)", async () => {
+    const runtime = new LocalSessionRuntime();
+    const forkRemote = join(dir, "fork5.git");
+    git(["clone", "--bare", "--quiet", mainRemote, forkRemote]);
+    const options = {
+      baseUrl: base,
+      workspace: WORKSPACE,
+      agent: "ada",
+      intent: "Retry the rejected change",
+      claimPaths: ["src/fix.ts"],
+      forkRemote,
+      runtime,
+    };
+
+    const started = await startSession(options);
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    const session = { ...options, changesetId: started.changeset.id, baseSha: started.baseSha };
+
+    // The agent edits its leased file AND smuggles a change outside its scope.
+    await runtime.run(
+      [
+        "sh",
+        "-c",
+        "printf 'export const fix = 1;\\n' > src/fix.ts && printf '\\nsmuggled by ada\\n' >> README.md",
+      ],
+      { cwd: started.workDir },
+    );
+
+    // First submission under-reports: it declares only its leased file while
+    // the smuggled README edit is really in the commit — exactly the case
+    // the runner's git-side verify exists to catch.
+    const sha = await runtime.commitAll("agent: retry the rejected change", {
+      name: "ada",
+      email: "ada@latch.local",
+    });
+    await runtime.push(forkRemote);
+    const queued = await post(`/changesets/${started.changeset.id}/ready`, {
+      ref: sha,
+      touchedPaths: ["src/fix.ts"],
+    });
+    expect(queued.status).toBe(202);
+
+    // The agent waits for its verdict while the runner processes the queue.
+    const waiting = awaitIntegration({
+      baseUrl: base,
+      workspace: WORKSPACE,
+      changesetId: started.changeset.id,
+      timeoutMs: 15_000,
+    });
+    const rejected = await runOnce({ baseUrl: base, workspace: WORKSPACE });
+    expect(rejected.status).toBe("rejected");
+    const outcome = await waiting;
+    expect(outcome.status).toBe("rejected");
+    expect(outcome.reason).toContain("README.md");
+
+    // Leases are retained — the agent reverts the smuggle inside its own
+    // fork and re-submits the SAME changeset; no new claim is needed.
+    await runtime.run(["sh", "-c", "git checkout HEAD~1 -- README.md"], {
+      cwd: started.workDir,
+    });
+    const second = await finishSession(session);
+    expect(second.ready.status).toBe(202);
+    expect(second.touchedPaths).toEqual(["src/fix.ts"]);
+
+    const retryWait = awaitIntegration({
+      baseUrl: base,
+      workspace: WORKSPACE,
+      changesetId: started.changeset.id,
+      timeoutMs: 15_000,
+    });
+    const merged = await runOnce({ baseUrl: base, workspace: WORKSPACE });
+    expect(merged.status).toBe("merged");
+    const retryOutcome = await retryWait;
+    expect(retryOutcome.status).toBe("merged");
+    expect(retryOutcome.mergedSha).toBeTruthy();
+
+    // main gained the fix, never the smuggle.
+    expect(git(["--git-dir", mainRemote, "show", "HEAD:README.md"])).not.toContain(
+      "smuggled by ada",
+    );
+    expect(git(["--git-dir", mainRemote, "log", "-1", "--format=%B"])).toContain(
+      "Latch-Agent: ada",
+    );
 
     await runtime.cleanup();
   });
