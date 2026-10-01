@@ -13,10 +13,11 @@
     "deploy": "npm run build && wrangler deploy -c wrangler.deploy.jsonc",
     "integration": "node src/integration/cli.ts",
     "demo": "npm run build && node scripts/demo.ts",
-    "typecheck": "wrangler types -c wrangler.deploy.jsonc && tsc --noEmit && tsc --noEmit -p src/ui",
+    "typecheck": "wrangler types -c wrangler.deploy.jsonc && tsc --noEmit && tsc --noEmit -p src/ui && tsc --noEmit -p test/e2e",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "npm run build && vitest run",
+    "test:e2e": "playwright test",
     "test:watch": "npm run build && vitest",
     "check": "npm run typecheck && npm run lint && npm test"
   },
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^26.6.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

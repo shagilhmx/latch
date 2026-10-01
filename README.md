@@ -58,9 +58,10 @@ line of defense is physical: agents cannot push `main` at all.
 
 ```sh
 npm install
-npm run check      # typecheck + full test suite (66 tests, workers + node)
+npm run check      # typecheck + lint + full test suite (97 tests, workers + node)
 npm run dev        # vite watch + wrangler dev → http://localhost:8787
 npm run demo       # build + scripted 3-agent demo (see below)
+npm run test:e2e   # Playwright browser tests against wrangler dev
 ```
 
 The demo seeds a temp workspace, boots `wrangler dev`, and runs three agent
@@ -139,7 +140,7 @@ local git and the agent-execution route answers `503`.
 5. **Architecture** (~90 s) — Coordinator DO (leases/queue/events over one
    SQLite), Artifacts fork naming, why agents physically can't push `main`,
    hibernated WebSocket → live UI.
-6. **Trust but verify** (~60 s) — `npm run check` (66 tests: overlap matrix,
+6. **Trust but verify** (~60 s) — `npm run check` (97 tests: overlap matrix,
    atomicity, expiry, serialization, violations, real-git merge/reject/conflict
    scenarios) and `npm run demo` end-to-end green.
 
@@ -179,7 +180,8 @@ Deploy secrets: `AUTH_SECRET` (required — fail-closed),
 | `src/ui/` | React SPA (lease map, changesets, merge stream) with WebSocket store |
 | `container/` | `Dockerfile` (integration runner) + `Agent.Dockerfile` (agent CLI image) |
 | `scripts/demo.ts` | The 3-agent scripted demo |
-| `test/workers/`, `test/node/` | 66 tests: unit + DO behavior in workerd, real `wrangler dev` in node |
+| `test/workers/`, `test/node/` | 97 tests: unit + DO behavior in workerd, real `wrangler dev` in node |
+| `test/e2e/` | 5 Playwright flows against `wrangler dev` (streaming, WS push, auth, responsive) |
 | `wrangler.jsonc` | Local config (accountless: DO + assets + queue) |
 | `wrangler.deploy.jsonc` | Deploy config (adds `ARTIFACTS`, `AGENT_SANDBOX` container, gateway) |
 
@@ -192,8 +194,12 @@ Deploy secrets: `AUTH_SECRET` (required — fail-closed),
 - ✅ Step 5 — session runtimes: local git + AgentSandbox container + orchestrator
 - ✅ Step 6 — live UI: WebSocket store, lease map, changesets, merge stream
 - ✅ Step 7 — scripted 3-agent demo (12/12 assertions)
-- ✅ Step 8 — verification: typecheck + 66 tests + browser checks green
+- ✅ Step 8 — verification: typecheck + lint + 97 tests + browser checks green
 - ✅ Step 9 — submission package: run instructions, demo outline, CI workflow
+- ✅ Hardening pass — coordinator split into modules, ESLint in `check`, directory lease claims, rejection→fix→retry flow
+- ✅ Agent SDK + OpenAPI at `/api/openapi.json`
+- ✅ Auth: GitHub OAuth, signed sessions, workspace roles, dev bypass
+- ✅ Playwright E2E (5 flows) wired into CI alongside tests and the demo
 
 ## License
 

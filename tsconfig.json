@@ -24,5 +24,6 @@
     "scripts",
     "test",
     "worker-configuration.d.ts"
-  ]
+  ],
+  "exclude": ["test/e2e"]
 }
