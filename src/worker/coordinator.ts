@@ -155,11 +155,12 @@ function toEvent(row: EventRow): CoordinationEvent {
  */
 export class Coordinator {
   private dirty = false;
+  readonly state: DurableObjectState;
+  readonly env: Env;
 
-  constructor(
-    readonly state: DurableObjectState,
-    readonly env: Env,
-  ) {
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+    this.env = env;
     state.blockConcurrencyWhile(async () => {
       this.migrate();
     });

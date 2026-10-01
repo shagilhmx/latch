@@ -15,12 +15,12 @@ const WORKSPACE_NAME_PATTERN = /^[A-Za-z0-9_-]{2,48}$/;
 const TOKEN_TTL_SECONDS = 3_600;
 
 export class ArtifactError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
     super(message);
     this.name = "ArtifactError";
+    this.code = code;
   }
 }
 

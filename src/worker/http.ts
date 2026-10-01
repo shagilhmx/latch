@@ -15,14 +15,16 @@ export function apiError(
 
 /** Thrown by route handlers; the fetch wrapper converts it to a response. */
 export class HttpProblem extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-    readonly extra: Partial<ApiError> = {},
-  ) {
+  readonly status: number;
+  readonly code: string;
+  readonly extra: Partial<ApiError>;
+
+  constructor(status: number, code: string, message: string, extra: Partial<ApiError> = {}) {
     super(message);
     this.name = "HttpProblem";
+    this.status = status;
+    this.code = code;
+    this.extra = extra;
   }
 }
 
