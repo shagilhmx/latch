@@ -46,6 +46,8 @@ export interface IntegrationJob {
   enqueuedAt: number;
   startedAt: number | null;
   finishedAt: number | null;
+  /** Times this job has been claimed (1 = first run); see JOB_TIMEOUT_MS. */
+  attempt: number;
 }
 
 /** A job enriched with everything the runner needs to do the merge. */

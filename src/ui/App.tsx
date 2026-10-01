@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { shortId } from "./format";
+import { Claim } from "./panels/Claim";
 import { Changesets } from "./panels/Changesets";
 import { LeaseMap } from "./panels/LeaseMap";
 import { MergeStream } from "./panels/MergeStream";
+import { Members } from "./panels/Members";
 import { useWorkspace } from "./useWorkspace";
 
 interface AuthUser {
@@ -91,6 +93,12 @@ export default function App() {
 
   const stats = snapshot?.stats;
 
+  // Can this visitor mutate the workspace? GitHub mode requires a signed-in
+  // user (membership/roles are enforced server-side); dev mode is open.
+  const canAct = auth !== null && (auth.mode === "dev" || auth.user !== null);
+  const signInHref = `/api/auth/login?next=${encodeURIComponent(window.location.pathname)}`;
+  const defaultAgent = auth?.user?.login ?? (auth?.mode === "dev" ? "dev" : "");
+
   return (
     <main>
       <header className="topbar">
@@ -134,13 +142,28 @@ export default function App() {
         </section>
       ) : (
         <section className="layout">
+          <Claim
+            workspace={workspace}
+            canAct={canAct}
+            authLoading={auth === null}
+            defaultAgent={defaultAgent}
+            signInHref={signInHref}
+          />
           <Changesets
+            workspace={workspace}
             changesets={snapshot.changesets}
             leases={snapshot.leases}
             jobs={snapshot.jobs}
+            canAct={canAct}
           />
           <MergeStream events={snapshot.recentEvents} now={now} />
           <LeaseMap leases={snapshot.leases} now={now} />
+          <Members
+            workspace={workspace}
+            canAct={canAct}
+            authLoading={auth === null}
+            signInHref={signInHref}
+          />
         </section>
       )}
 

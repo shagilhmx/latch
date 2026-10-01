@@ -22,9 +22,12 @@
   },
   // AUTH_SECRET turns on GitHub session auth (fail-closed: without it the
   // deployment would run in dev-identity mode). GITHUB_CLIENT_SECRET signs
-  // the OAuth code exchange.
+  // the OAuth code exchange. RUNNER_TOKEN gates the runner-only routes
+  // (/integration/*, /internal/*): without it the worker fails closed (503)
+  // on those routes — `npx wrangler secret put RUNNER_TOKEN`, then pass the
+  // same value to the runner as `--runner-token`/LATCH_RUNNER_TOKEN.
   "secrets": {
-    "required": ["AI_GATEWAY_TOKEN", "AUTH_SECRET", "GITHUB_CLIENT_SECRET"]
+    "required": ["AI_GATEWAY_TOKEN", "AUTH_SECRET", "GITHUB_CLIENT_SECRET", "RUNNER_TOKEN"]
   },
   "assets": {
     "directory": "./dist",

@@ -21,6 +21,7 @@
     "src/integration",
     "src/sessions",
     "src/sdk",
+    "src/mcp",
     "scripts",
     "test",
     "worker-configuration.d.ts"

@@ -11,6 +11,10 @@ export default defineConfig({
             // Artifacts bindings otherwise force a remote proxy session, which
             // needs CLOUDFLARE_API_TOKEN; tests must run fully locally.
             remoteBindings: false,
+            // Configure a RUNNER_TOKEN so the test pool exercises the strict
+            // runner-auth path (helpers send it on every system request).
+            // Local dev and the demo keep no token → those paths stay open.
+            miniflare: { bindings: { RUNNER_TOKEN: "test-runner-token" } },
           }),
         ],
         test: {

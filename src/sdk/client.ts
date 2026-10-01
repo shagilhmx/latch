@@ -17,6 +17,7 @@ import type {
   LeaseConflict,
   WorkspaceSnapshot,
 } from "../shared/types";
+import { runnerHeaders } from "../shared/runner-token.ts";
 
 export interface ApiResponse<T> {
   status: number;
@@ -35,6 +36,12 @@ export interface LatchClientOptions {
   /** Origin of the Latch worker, e.g. `https://latch.example.com`. */
   baseUrl: string;
   workspace: string;
+  /**
+   * RUNNER_TOKEN secret of the worker. Required to reach the runner-only
+   * routes (`claimNextJob`/`verifyJob`/`reportJob`) once the worker has a
+   * token configured; ignored in local dev (no token → open).
+   */
+  runnerToken?: string | null;
 }
 
 export interface ClaimOptions {
@@ -45,10 +52,12 @@ export interface ClaimOptions {
 export class LatchClient {
   readonly baseUrl: string;
   readonly workspace: string;
+  private readonly runnerToken: string | null;
 
   constructor(options: LatchClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.workspace = options.workspace;
+    this.runnerToken = options.runnerToken ?? null;
   }
 
   /** Absolute URL for a workspace-scoped path (`""` = snapshot). */
@@ -61,7 +70,11 @@ export class LatchClient {
     path: string,
     init?: RequestInit,
   ): Promise<ApiResponse<T>> {
-    const response = await fetch(this.url(path), init);
+    const headers = new Headers(init?.headers);
+    for (const [name, value] of Object.entries(runnerHeaders(this.runnerToken))) {
+      headers.set(name, value);
+    }
+    const response = await fetch(this.url(path), { ...init, headers });
     const text = await response.text();
     return {
       status: response.status,
@@ -180,15 +193,25 @@ export class LatchClient {
   verifyJob(
     seq: number,
     paths: string[],
+    /** Claim attempt to echo; mismatches are refused with 409 stale_attempt. */
+    attempt?: number,
   ): Promise<ApiResponse<{ ok: true; paths: string[] } & ApiErrorBody>> {
-    return this.post(`/integration/${seq}/verify`, { paths });
+    return this.post(`/integration/${seq}/verify`, {
+      paths,
+      ...(attempt !== undefined ? { attempt } : {}),
+    });
   }
 
   reportJob(
     seq: number,
     report: { status: "merged"; mergedSha?: string } | { status: "rejected"; reason: string },
+    /** Claim attempt to echo; mismatches are refused with 409 stale_attempt. */
+    attempt?: number,
   ): Promise<ApiResponse<{ job: IntegrationJob } & ApiErrorBody>> {
-    return this.post(`/integration/${seq}/result`, report);
+    return this.post(`/integration/${seq}/result`, {
+      ...report,
+      ...(attempt !== undefined ? { attempt } : {}),
+    });
   }
 
   // ------------------------------------------------------------ stream

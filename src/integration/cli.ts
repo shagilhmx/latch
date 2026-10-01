@@ -19,6 +19,7 @@ function parseArgs(argv: string[]): CliOptions {
     baseUrl: base.replace(/\/$/, ""),
     workspace,
     workspaceToken: argValue(argv, "--token") ?? process.env["LATCH_WORKSPACE_TOKEN"],
+    runnerToken: argValue(argv, "--runner-token") ?? process.env["LATCH_RUNNER_TOKEN"],
     keepWorkdir: argv.includes("--keep-workdir"),
     once: argv.includes("--once"),
     intervalMs: Number.isFinite(interval) && interval > 0 ? interval : 2000,

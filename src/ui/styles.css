@@ -431,3 +431,157 @@ footer {
 .signin:hover {
   filter: brightness(1.1);
 }
+
+/* ------------------------------------------------------------ action forms */
+
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+}
+
+.form-row {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1 1 9rem;
+  min-width: 0;
+}
+
+.field-grow {
+  flex: 3 1 16rem;
+}
+
+.field-narrow {
+  flex: 0 1 7rem;
+}
+
+.field label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.field input,
+.field select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  color: var(--text);
+  padding: 0.45rem 0.6rem;
+  font: inherit;
+  min-width: 0;
+}
+
+.field input:focus-visible,
+.field select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.btn {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #0b0d12;
+  font-weight: 600;
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.btn-quiet {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.btn-danger {
+  background: transparent;
+  border-color: var(--bad);
+  color: var(--bad);
+  font-weight: 500;
+}
+
+.btn-small {
+  padding: 0.2rem 0.65rem;
+  font-size: 0.78rem;
+}
+
+.form-msg {
+  font-size: 0.85rem;
+  margin: 0.6rem 0 0;
+}
+
+.form-msg.error {
+  color: var(--bad);
+}
+
+.form-msg.ok {
+  color: var(--ok);
+}
+
+.form-msg p {
+  margin: 0;
+}
+
+.conflicts {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.8rem;
+}
+
+/* ---------------------------------------------------------------- members */
+
+.member-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.member {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.88rem;
+  flex-wrap: wrap;
+}
+
+.member-login {
+  font-weight: 600;
+}
+
+.member .mono {
+  font-size: 0.75rem;
+}
+
+.changeset-abort {
+  margin-left: auto;
+}

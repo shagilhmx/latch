@@ -74,6 +74,8 @@ export function describeEvent(event: CoordinationEvent): string {
       return `${listPaths(payload["paths"])} expired`;
     case "integration.claimed":
       return `job ${String(payload["job"])} claimed → ${short}`;
+    case "integration.requeued":
+      return `job ${String(payload["job"])} requeued — runner went silent (attempt ${String(payload["attempt"] ?? "?")})`;
     case "integration.verified":
       return `verified ${listPaths(payload["paths"])}`;
     case "integration.merged":

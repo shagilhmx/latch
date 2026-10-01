@@ -39,7 +39,12 @@ events back to a changeset with no external database.
 
 **3. One serialized writer for `main`.** Readiness enqueues an integration
 job; the `Coordinator`'s claim loop has no `await`s between claim and lease,
-so jobs run strictly one at a time. The trusted runner (a real git process)
+so jobs run strictly one at a time. A runner that dies mid-job can't wedge
+the queue: a `running` job older than five minutes is requeued for the next
+poller — up to three claims — after which it is rejected back to its agent.
+Verify/result reports echo the claim's attempt, so a zombie runner from a
+superseded claim is refused (`409 stale_attempt`). The trusted runner (a
+real git process)
 clones `main`, fetches the fork HEAD, runs `git diff --name-only <merge-base>`
 — paths git itself derived, not agent-declared — and POSTs them back to
 `POST /integration/:seq/verify`. Any path outside the job's live leases
@@ -52,16 +57,22 @@ escalation — the runner never forces `main`.
 
 **Enforcement boundary:** lease checks in the UI are advisory; the
 authoritative check runs in the runner against git-derived paths. The second
-line of defense is physical: agents cannot push `main` at all.
+line of defense is physical: agents cannot push `main` at all. The third
+gates the trusted surface itself: `/integration/*` and `/internal/*` carry no
+user identity, so they require the shared `RUNNER_TOKEN` secret in the
+`x-latch-runner-token` header (compared in constant time). Production fails
+closed (503) until the secret is set; dev mode without a token stays open so
+the demo and test suite run accountless.
 
 ## Quickstart
 
 ```sh
 npm install
-npm run check      # typecheck + lint + full test suite (97 tests, workers + node)
+npm run check      # typecheck + lint + full test suite (126 tests, workers + node)
 npm run dev        # vite watch + wrangler dev → http://localhost:8787
 npm run demo       # build + scripted 3-agent demo (see below)
 npm run test:e2e   # Playwright browser tests against wrangler dev
+npm run mcp        # Latch MCP server for AI clients (stdio; see below)
 ```
 
 The demo seeds a temp workspace, boots `wrangler dev`, and runs three agent
@@ -99,6 +110,24 @@ if (verdict.status === "rejected") {
 }
 ```
 
+### MCP server
+
+Any MCP client (Claude Code, Cursor, …) gets the agent loop as tools —
+`latch_snapshot`, `latch_changeset_detail`, `latch_create_changeset`,
+`latch_claim_leases`, `latch_heartbeat_leases`, `latch_release_leases`,
+`latch_ready`, `latch_abort_changeset`, `latch_events`:
+
+```sh
+LATCH_BASE_URL=http://localhost:8787 LATCH_WORKSPACE=demo npm run mcp
+# production: add LATCH_RUNNER_TOKEN=… if you also use runner tools upstream
+```
+
+Stdio transport — stdout carries the protocol, diagnostics go to stderr.
+Writes are authorized exactly like any other API client (session cookie in
+GitHub mode, dev identity locally). Implementation in
+[`src/mcp/server.ts`](src/mcp/server.ts), exercised end-to-end over the real
+MCP protocol in `test/node/mcp.test.ts`.
+
 ### API reference
 
 `GET /api/openapi.json` serves an OpenAPI 3.1 description of every
@@ -122,6 +151,7 @@ deploys as-is.
 npx wrangler login              # OAuth (includes artifacts:write, containers:write)
 # wrangler.deploy.jsonc: AI_GATEWAY_ACCOUNT_ID, GITHUB_CLIENT_ID vars
 npx wrangler secret put AUTH_SECRET          # e.g. openssl rand -hex 32 | …
+npx wrangler secret put RUNNER_TOKEN        # gates /integration + /internal (openssl rand -hex 32)
 npx wrangler secret put GITHUB_CLIENT_SECRET # from the GitHub OAuth app
 npx wrangler secret put AI_GATEWAY_TOKEN     # AI Gateway token for agent runs
 npm run deploy                 # build + worker + container image push
@@ -135,11 +165,16 @@ One-time account setup (what actually works with wrangler 4.146):
 - **Artifacts namespace** — created from the dashboard (Storage &
   databases → Artifacts) or the REST API; there is no wrangler create
   command. Requires Workers Paid.
-- **Push-event subscription** — `wrangler queues subscription create
-  latch-artifacts-events --source artifacts.repo --events
-  cf.artifacts.repo.pushed` (the API also requires `source.namespace` +
-  `source.repo_name`, so repo-scoped subscriptions are created per fork
-  repo once Artifacts is enabled).
+- **Push-event subscription** — account-wide: `wrangler queues subscription
+  create latch-artifacts-events --source artifacts.repo --events
+  cf.artifacts.repo.pushed`. Repo pushes need one more step: the API's
+  filter (`source.namespace` + `source.repo_name`) can't be set by wrangler,
+  and session forks are created dynamically — so Latch subscribes each fork
+  individually: pass `subscribePushes` to `startSession()` (the session
+  subscribes its own fork), or run
+  `node scripts/subscribe-fork.ts ws-<workspace>.cs.<8hex>`. Both are
+  config-gated on `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` and
+  no-op with a typed `not_configured` result when unset.
 
 The local config (`wrangler.jsonc`) runs accountless: the coordinator,
 queue, runner, and UI all work in `wrangler dev`; with no Artifacts
@@ -164,9 +199,10 @@ agent-execution route answers `503`.
 5. **Architecture** (~90 s) — Coordinator DO (leases/queue/events over one
    SQLite), Artifacts fork naming, why agents physically can't push `main`,
    hibernated WebSocket → live UI.
-6. **Trust but verify** (~60 s) — `npm run check` (97 tests: overlap matrix,
-   atomicity, expiry, serialization, violations, real-git merge/reject/conflict
-   scenarios) and `npm run demo` end-to-end green.
+6. **Trust but verify** (~60 s) — `npm run check` (126 tests: overlap
+   matrix, atomicity, expiry, serialization, violations, property-based
+   lease algebra, claim-storm/single-writer stress, runner auth, real-git
+   merge/reject/conflict scenarios) and `npm run demo` end-to-end green.
 
 ## Authentication & workspaces
 
@@ -188,8 +224,16 @@ owners add collaborators with `{userId, login, role}`. Denials surface in
 the live stream as `auth.denied` events, and the API layer overwrites the
 identity header on every request — clients cannot forge it.
 
-Deploy secrets: `AUTH_SECRET` (required — fail-closed),
-`GITHUB_CLIENT_SECRET`, and the `GITHUB_CLIENT_ID` var.
+The UI gates its action panels on the same identity: the claim form,
+per-changeset abort, and member management are live for the dev identity
+and signed-in users, and replaced by a sign-in prompt otherwise — the
+server authorizes every action regardless.
+
+Deploy secrets: `AUTH_SECRET` (required — fail-closed), `RUNNER_TOKEN`
+(required for runner routes — also fail-closed), `GITHUB_CLIENT_SECRET`,
+and the `GITHUB_CLIENT_ID` var. Runners and the queue consumer receive the
+token via `--runner-token`/`LATCH_RUNNER_TOKEN` (the CLI and SDK both send
+`x-latch-runner-token`).
 
 ## Repository layout
 
@@ -200,12 +244,14 @@ Deploy secrets: `AUTH_SECRET` (required — fail-closed),
 | `src/integration/{runner,git,cli}.ts` | Trusted integration runner: git-side verify → `--no-ff` merge → push |
 | `src/sessions/{runtime,local,session,sandbox,outbound}.ts` | Session orchestration; local git runtime + `AgentSandbox` container runtime |
 | `src/sdk/` | Agent SDK: typed HTTP client + session orchestration re-exports |
+| `src/mcp/` | Latch MCP server (stdio): the agent loop as MCP tools |
+| `src/integration/fork-events.ts` | Per-fork push-subscription helper (repo-scoped event filter) |
 | `src/worker/auth{,z}.ts` | Session cookies, GitHub OAuth, authorization policy |
 | `src/ui/` | React SPA (lease map, changesets, merge stream) with WebSocket store |
 | `container/` | `Dockerfile` (integration runner) + `Agent.Dockerfile` (agent CLI image) |
 | `scripts/demo.ts` | The 3-agent scripted demo |
-| `test/workers/`, `test/node/` | 97 tests: unit + DO behavior in workerd, real `wrangler dev` in node |
-| `test/e2e/` | 5 Playwright flows against `wrangler dev` (streaming, WS push, auth, responsive) |
+| `test/workers/`, `test/node/` | 126 tests: unit + DO behavior in workerd, property/stress suites, MCP protocol, real `wrangler dev` in node |
+| `test/e2e/` | 7 Playwright flows against `wrangler dev` (streaming, WS push, auth, UI claim/abort, members, responsive) |
 | `wrangler.jsonc` | Local config (accountless: DO + assets + queue) |
 | `wrangler.deploy.jsonc` | Deploy config (adds `ARTIFACTS`, `AGENT_SANDBOX` container, gateway) |
 
@@ -227,6 +273,10 @@ Deploy secrets: `AUTH_SECRET` (required — fail-closed),
 - ✅ Live deploy: worker preview at latch.latch-lab.workers.dev — 13-point
   live e2e green (fail-closed 401, cookie auth, DO claim/queue/merge,
   WebSocket push); Artifacts + container deploy unlocks with Workers Paid
+- ✅ Improvements pass — runner auth (`RUNNER_TOKEN`, fail-closed),
+  stale-job recovery + zombie-report guard, per-fork push subscriptions,
+  UI actions (claim/abort/members with sign-in gating), MCP server,
+  property + stress suites (126 tests total, e2e 7 flows)
 
 ## License
 

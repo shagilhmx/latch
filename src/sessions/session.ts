@@ -1,5 +1,10 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import {
+  subscribeForkPushes,
+  type ForkPushSubscriptionConfig,
+  type ForkPushSubscriptionResult,
+} from "../integration/fork-events.ts";
 import { sessionRepoName } from "../worker/artifacts.ts";
 import type { Changeset, IntegrationJob, LeaseConflict } from "../shared/types.ts";
 import type { Author, SessionRuntime } from "./runtime.ts";
@@ -20,10 +25,25 @@ export interface StartSessionOptions {
   workDir?: string;
   runtime: SessionRuntime;
   leaseTtlSeconds?: number;
+  /**
+   * When set (Artifacts mode), the session fork is subscribed to
+   * `cf.artifacts.repo.pushed` right after the fork is attached, so pushes
+   * to it enqueue integration automatically. Config-gated: credentials are
+   * read from the config (typically `process.env`), and leaving it unset —
+   * or leaving the credentials empty — skips the call entirely.
+   */
+  subscribePushes?: ForkPushSubscriptionConfig;
 }
 
 export type StartSessionResult =
-  | { ok: true; changeset: Changeset; workDir: string; baseSha: string }
+  | {
+      ok: true;
+      changeset: Changeset;
+      workDir: string;
+      baseSha: string;
+      /** Result of the optional push subscription (absent when not requested). */
+      pushSubscription?: ForkPushSubscriptionResult;
+    }
   | { ok: false; reason: "lease_conflict"; conflicts: LeaseConflict[]; changesetId: string }
   | { ok: false; reason: string; message: string };
 
@@ -108,11 +128,12 @@ export async function startSession(options: StartSessionOptions): Promise<StartS
     return { ok: false, reason: body.error ?? "lease_failed", message: body.message ?? "" };
   }
 
+  const forkRepo = options.forkRepo ?? sessionRepoName(options.workspace, changeset.id);
   const attached = await call(
     api,
     `/changesets/${changeset.id}/fork`,
     post({
-      forkRepo: options.forkRepo ?? sessionRepoName(options.workspace, changeset.id),
+      forkRepo,
       forkRemote: options.forkRemote,
       forkToken: options.forkToken,
     }),
@@ -125,10 +146,24 @@ export async function startSession(options: StartSessionOptions): Promise<StartS
     };
   }
 
+  // Best-effort: subscribe the fork to push events so integration runs on
+  // every push. Never fails the session — an unsubscribed fork still works
+  // via the explicit ready() path.
+  const pushSubscription =
+    options.subscribePushes === undefined
+      ? undefined
+      : await subscribeForkPushes(forkRepo, options.subscribePushes);
+
   const workDir = options.workDir ?? (await mkdtemp(`${tmpdir()}/latch-session-`));
   const prepared = await options.runtime.prepare(options.forkRemote, workDir);
 
-  return { ok: true, changeset, workDir: prepared.workDir, baseSha: prepared.baseSha };
+  return {
+    ok: true,
+    changeset,
+    workDir: prepared.workDir,
+    baseSha: prepared.baseSha,
+    ...(pushSubscription !== undefined ? { pushSubscription } : {}),
+  };
 }
 
 /**

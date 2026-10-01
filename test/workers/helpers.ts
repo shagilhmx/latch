@@ -1,6 +1,10 @@
 import { SELF, env, runInDurableObject } from "cloudflare:test";
+import { RUNNER_TOKEN_HEADER } from "../../src/shared/runner-token.ts";
 
 const BASE = "https://latch.test";
+
+/** Matches the RUNNER_TOKEN binding injected in vitest.config.ts. */
+export const RUNNER_TOKEN = "test-runner-token";
 
 let counter = 0;
 
@@ -29,7 +33,11 @@ async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<ApiResponse<T>> {
-  const response = await SELF.fetch(`${BASE}${path}`, init);
+  // Every system route requires the runner token; attaching it here keeps
+  // tests focused on their own behavior (runner-auth.test.ts covers it).
+  const headers = new Headers(init?.headers);
+  headers.set(RUNNER_TOKEN_HEADER, RUNNER_TOKEN);
+  const response = await SELF.fetch(`${BASE}${path}`, { ...init, headers });
   const text = await response.text();
   return {
     status: response.status,
@@ -76,5 +84,20 @@ export async function backdateLeases(workspace: string, expiresAt: number): Prom
   const stub = namespace.get(namespace.idFromName(workspace));
   await runInDurableObject(stub, async (coordinator) => {
     coordinator.state.storage.sql.exec("UPDATE leases SET expires_at = ?", expiresAt);
+  });
+}
+
+/**
+ * Backdates the running job's `started_at` — used to test stale-job
+ * recovery (requeue past JOB_TIMEOUT_MS, attempt cap).
+ */
+export async function backdateRunningJob(workspace: string, startedAt: number): Promise<void> {
+  const namespace = env.COORDINATOR;
+  const stub = namespace.get(namespace.idFromName(workspace));
+  await runInDurableObject(stub, async (coordinator) => {
+    coordinator.state.storage.sql.exec(
+      "UPDATE jobs SET started_at = ? WHERE status = 'running'",
+      startedAt,
+    );
   });
 }

@@ -312,6 +312,54 @@ describe("integration runner against a real git workspace", () => {
     expect(heldPaths).toContain("src/other.ts");
   });
 
+  it("subscribes the session fork to push events only when configured", async () => {
+    const forkRemote = join(dir, "fork-sub.git");
+    git(["clone", "--bare", "--quiet", mainRemote, forkRemote]);
+
+    const calls: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      calls.push(url);
+      const body = url.includes("/queues")
+        ? {
+            success: true,
+            errors: [],
+            result: [{ queue_id: "q-1", name: "latch-artifacts-events" }],
+          }
+        : { success: true, errors: [], result: { id: "sub-1" } };
+      return new Response(JSON.stringify(body), { status: 200 });
+    }) as typeof fetch;
+
+    const started = await startSession({
+      baseUrl: base,
+      workspace: WORKSPACE,
+      agent: "ops",
+      intent: "Wire push subscription",
+      claimPaths: ["src/subscription.ts"],
+      forkRemote,
+      runtime: new LocalSessionRuntime(),
+      subscribePushes: { accountId: "acct-1", apiToken: "cf-token", fetchImpl },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    // Config-gated path: queue lookup first, then the repo-scoped create.
+    expect(started.pushSubscription).toEqual({
+      status: "subscribed",
+      subscriptionId: "sub-1",
+      queueId: "q-1",
+    });
+    expect(calls[0]).toContain("/queues?name=latch-artifacts-events");
+    expect(calls[1]).toContain("/event_subscriptions/subscriptions");
+
+    await abortSession({
+      baseUrl: base,
+      workspace: WORKSPACE,
+      changesetId: started.changeset.id,
+      runtime: new LocalSessionRuntime(),
+    });
+  });
+
   it("runs the orchestrator flow: startSession, prevented conflict, merge", async () => {
     const runtime = new LocalSessionRuntime();
     const forkRemote = join(dir, "fork4.git");
@@ -328,6 +376,10 @@ describe("integration runner against a real git workspace", () => {
     });
     expect(started.ok).toBe(true);
     if (!started.ok) return;
+
+    // No subscribePushes configured → the fork-subscription call is skipped
+    // entirely (config-gated, accountless by default).
+    expect(started.pushSubscription).toBeUndefined();
 
     // A second agent is refused the same scope BEFORE it can edit anything.
     const blocked = await startSession({
