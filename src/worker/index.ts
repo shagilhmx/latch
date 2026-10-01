@@ -1,8 +1,10 @@
 import { handleApi } from "./api";
 import { handleArtifactsEvent } from "./events";
 import { Coordinator } from "./coordinator";
+import { AgentSandbox } from "../sessions/sandbox";
+import { Outbound } from "../sessions/outbound";
 
-export { Coordinator };
+export { Coordinator, AgentSandbox, Outbound };
 
 export default {
   async fetch(request, env): Promise<Response> {

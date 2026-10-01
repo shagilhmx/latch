@@ -182,6 +182,80 @@ async function createSession(request: Request, env: Env, workspace: string): Pro
   }
 }
 
+/**
+ * RPC routes into the per-changeset AgentSandbox Durable Object (deployed
+ * config only — the container binding does not exist locally).
+ */
+async function agentRoute(
+  request: Request,
+  env: Env,
+  changesetId: string,
+  action: string,
+): Promise<Response> {
+  const namespace = env.AGENT_SANDBOX;
+  if (namespace === undefined) {
+    return apiError(
+      503,
+      "sandbox_unavailable",
+      "Agent sandboxes require the deployed config: " +
+        "`wrangler deploy -c wrangler.deploy.jsonc` with Docker available.",
+    );
+  }
+
+  const stub = namespace.get(namespace.idFromName(changesetId));
+  const method = request.method.toUpperCase();
+  const requirePost = method === "POST";
+
+  switch (action) {
+    case "checkout": {
+      if (!requirePost) return apiError(405, "method_not_allowed", "POST required");
+      const body = await readBody(request);
+      const token = typeof body["token"] === "string" ? body["token"] : null;
+      return json(await stub.checkout(requireString(body, "remote"), token));
+    }
+    case "start": {
+      if (!requirePost) return apiError(405, "method_not_allowed", "POST required");
+      const body = await readBody(request);
+      const state = await stub.startAgentTask(requireString(body, "prompt"));
+      return json({ state });
+    }
+    case "status":
+      return json(await stub.status());
+    case "diff":
+      return new Response(await stub.readDiff(), {
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    case "push": {
+      if (!requirePost) return apiError(405, "method_not_allowed", "POST required");
+      const body = await readBody(request);
+      const authorRaw = body["author"];
+      const author =
+        typeof authorRaw === "object" && authorRaw !== null
+          ? {
+              name: String((authorRaw as { name?: unknown }).name ?? "agent"),
+              email: String((authorRaw as { email?: unknown }).email ?? "agent@latch.local"),
+            }
+          : { name: "agent", email: "agent@latch.local" };
+      const token = typeof body["token"] === "string" ? body["token"] : null;
+      return json(
+        await stub.pushChanges(
+          requireString(body, "remote"),
+          token,
+          requireString(body, "message"),
+          author,
+        ),
+      );
+    }
+    case "dispose": {
+      if (!requirePost) return apiError(405, "method_not_allowed", "POST required");
+      await stub.dispose();
+      return json({ disposed: true });
+    }
+    default:
+      return apiError(404, "not_found", `Unknown agent action ${action}`);
+  }
+}
+
 /** API router: workspace-owned routes handled here, the rest by the DO. */
 export async function handleApi(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -200,6 +274,13 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     }
     if (segments[0] === "sessions" && segments.length === 1 && method === "POST") {
       return await createSession(request, env, workspace);
+    }
+    if (
+      segments[0] === "sessions" &&
+      segments.length === 4 &&
+      segments[2] === "agent"
+    ) {
+      return await agentRoute(request, env, segments[1] ?? "", segments[3] ?? "");
     }
     return await coordinatorFor(env, workspace).fetch(request);
   } catch (error) {

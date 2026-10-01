@@ -18,6 +18,7 @@
     "check": "npm run typecheck && npm test"
   },
   "dependencies": {
+    "@cloudflare/sandbox": "^1.0.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

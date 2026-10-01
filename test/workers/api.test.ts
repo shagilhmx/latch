@@ -111,4 +111,15 @@ describe("session and setup routes", () => {
     const body = (await response.json()) as { error: string };
     expect(body.error).toBe("invalid_workspace");
   });
+
+  it("returns 503 for agent sandbox routes without the container binding", async () => {
+    const w = workspaceApi();
+    const cs = await w.createChangeset("agent-a", "Needs a container");
+    const { status, body } = await w.post(`/sessions/${cs}/agent/start`, {
+      prompt: "rename the helper",
+    });
+    expect(status).toBe(503);
+    expect(body.error).toBe("sandbox_unavailable");
+    expect(body.message).toContain("wrangler.deploy.jsonc");
+  });
 });

@@ -13,6 +13,15 @@
   "name": "latch",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "AI_GATEWAY_ACCOUNT_ID": "<YOUR_ACCOUNT_ID>",
+    "AI_GATEWAY_ID": "default",
+    "MODEL": "claude-sonnet-5"
+  },
+  "secrets": {
+    "required": ["AI_GATEWAY_TOKEN"]
+  },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
@@ -35,11 +44,26 @@
       }
     ]
   },
+  "containers": [
+    {
+      "class_name": "AgentSandbox",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "agent": {
+          "dockerfile": "./container/Agent.Dockerfile"
+        }
+      }
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {
         "name": "COORDINATOR",
         "class_name": "Coordinator"
+      },
+      {
+        "name": "AGENT_SANDBOX",
+        "class_name": "AgentSandbox"
       }
     ]
   },
@@ -47,6 +71,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["Coordinator"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["AgentSandbox"]
     }
   ],
   "observability": {

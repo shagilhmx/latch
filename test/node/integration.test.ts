@@ -5,6 +5,8 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sessionRepoName } from "../../src/worker/artifacts.ts";
 import { runOnce } from "../../src/integration/runner.ts";
+import { LocalSessionRuntime } from "../../src/sessions/local.ts";
+import { abortSession, finishSession, startSession } from "../../src/sessions/session.ts";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 const WORKSPACE = "e2e";
@@ -307,5 +309,76 @@ describe("integration runner against a real git workspace", () => {
     const heldPaths = snapshot.body.leases.map((lease: { path: string }) => lease.path);
     expect(heldPaths).toContain("src/conflict.ts");
     expect(heldPaths).toContain("src/other.ts");
+  });
+
+  it("runs the orchestrator flow: startSession, prevented conflict, merge", async () => {
+    const runtime = new LocalSessionRuntime();
+    const forkRemote = join(dir, "fork4.git");
+    git(["clone", "--bare", "--quiet", mainRemote, forkRemote]);
+
+    const started = await startSession({
+      baseUrl: base,
+      workspace: WORKSPACE,
+      agent: "linus",
+      intent: "Add a utility module",
+      claimPaths: ["src/util.ts"],
+      forkRemote,
+      runtime,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    // A second agent is refused the same scope BEFORE it can edit anything.
+    const blocked = await startSession({
+      baseUrl: base,
+      workspace: WORKSPACE,
+      agent: "dennis",
+      intent: "Also wants the utility module",
+      claimPaths: ["src/util.ts"],
+      forkRemote,
+      runtime: new LocalSessionRuntime(),
+    });
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok && "conflicts" in blocked) {
+      expect(blocked.conflicts[0]?.path).toBe("src/util.ts");
+      expect(blocked.conflicts[0]?.agent).toBe("linus");
+      await abortSession({
+        baseUrl: base,
+        workspace: WORKSPACE,
+        changesetId: blocked.changesetId,
+        runtime: new LocalSessionRuntime(),
+      });
+    }
+
+    // The first agent works only inside its leased scope.
+    const edit = await runtime.run(
+      ["sh", "-c", "printf 'export const util = () => 42;\\n' > src/util.ts"],
+      { cwd: started.workDir },
+    );
+    expect(edit.exitCode).toBe(0);
+
+    const finished = await finishSession({
+      baseUrl: base,
+      workspace: WORKSPACE,
+      agent: "linus",
+      intent: "Add a utility module",
+      claimPaths: ["src/util.ts"],
+      forkRemote,
+      runtime,
+      changesetId: started.changeset.id,
+      baseSha: started.baseSha,
+    });
+    expect(finished.ready.status).toBe(202);
+    expect(finished.touchedPaths).toEqual(["src/util.ts"]);
+
+    const outcome = await runOnce({ baseUrl: base, workspace: WORKSPACE });
+    expect(outcome.status).toBe("merged");
+
+    const message = git(["--git-dir", mainRemote, "log", "-1", "--format=%B"]);
+    expect(message).toContain("Latch-Agent: linus");
+    expect(message).toContain("Intent: Add a utility module");
+    expect(message).toContain("Lease-Paths: src/util.ts");
+
+    await runtime.cleanup();
   });
 });

@@ -18,15 +18,18 @@ export interface GitOptions {
   /** `Authorization: Bearer <token>` extraHeader for Artifacts git remotes. */
   authHeader?: string;
   env?: Record<string, string>;
+  /** Overrides the default Latch Integration identity for this command. */
+  author?: { name: string; email: string };
 }
 
 /** Run git, returning trimmed stdout. Erasable-syntax-only (runs under Node type stripping). */
 export function git(args: string[], options: GitOptions = {}): Promise<string> {
+  const author = options.author;
   const fullArgs = [
     "-c",
-    "user.name=Latch Integration",
+    `user.name=${author?.name ?? "Latch Integration"}`,
     "-c",
-    "user.email=integration@latch.local",
+    `user.email=${author?.email ?? "integration@latch.local"}`,
     ...(options.authHeader !== undefined ? ["-c", `http.extraHeader=${options.authHeader}`] : []),
     ...args,
   ];
