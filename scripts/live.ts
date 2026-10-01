@@ -4,6 +4,10 @@
  *   LATCH_SESSION_SECRET=<worker AUTH_SECRET> \
  *   LATCH_RUNNER_TOKEN=<worker RUNNER_TOKEN> node scripts/live.ts [baseUrl]
  *
+ * Besides the session loop this proves the runner gate in production:
+ * `/integration/*` refuses anonymous claims (401, missing or wrong token)
+ * before the token-carrying runner gets anywhere near the queue.
+ *
  * Signs a session cookie locally (same HMAC scheme as src/worker/auth.ts),
  * injects it into every fetch, and drives the full coordination loop
  * against the real Durable Object: configure workspace → claim → edit →
@@ -31,6 +35,10 @@ const baseUrl = (process.argv[2] ?? "https://latch.latch-lab.workers.dev").repla
 const secret = process.env.LATCH_SESSION_SECRET ?? "";
 if (secret.length === 0) {
   throw new Error("Set LATCH_SESSION_SECRET to the worker's AUTH_SECRET");
+}
+const runnerToken = process.env.LATCH_RUNNER_TOKEN ?? "";
+if (runnerToken.length === 0) {
+  throw new Error("Set LATCH_RUNNER_TOKEN to the worker's RUNNER_TOKEN secret");
 }
 const WORKSPACE = "live";
 
@@ -73,6 +81,25 @@ async function main(): Promise<void> {
     body: JSON.stringify({ agent: "anon", intent: "should be refused" }),
   });
   check(anon.status === 401, "anonymous mutation refused with 401 auth_required");
+
+  // ------------------------------------------- runner gate (fail-closed)
+  const claimUrl = `${baseUrl}/api/workspaces/${WORKSPACE}/integration/next`;
+  const gate = (headers?: Record<string, string>) =>
+    fetch(claimUrl, headers === undefined ? undefined : { headers });
+
+  const missing = await gate();
+  const missingBody = (await missing.json()) as { error?: string };
+  check(
+    missing.status === 401 && missingBody.error === "runner_auth_required",
+    "runner claim without token refused (401 runner_auth_required)",
+  );
+
+  const wrong = await gate({ "x-latch-runner-token": "not-the-token" });
+  const wrongBody = (await wrong.json()) as { error?: string };
+  check(
+    wrong.status === 401 && wrongBody.error === "runner_auth_invalid",
+    "runner claim with wrong token refused (401 runner_auth_invalid)",
+  );
 
   // ------------------------------------------------- authenticate
   const session = await signSession({ id: "dev:live", login: "live" }, secret);
@@ -161,7 +188,7 @@ async function main(): Promise<void> {
   const outcome = await runOnce({
     baseUrl,
     workspace: WORKSPACE,
-    runnerToken: process.env.LATCH_RUNNER_TOKEN ?? null,
+    runnerToken,
   });
   check(outcome.status === "merged", "runner merged the session into main");
   const verdict = await waiting;
