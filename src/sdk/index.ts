@@ -28,7 +28,7 @@ export {
   type ApiResponse,
   type ClaimOptions,
   type LatchClientOptions,
-} from "./client";
+} from "./client.ts";
 
 export {
   abortSession,

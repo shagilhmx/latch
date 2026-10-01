@@ -13,6 +13,7 @@
     "deploy": "npm run build && wrangler deploy -c wrangler.deploy.jsonc",
     "integration": "node src/integration/cli.ts",
     "demo": "npm run build && node scripts/demo.ts",
+    "live": "node scripts/live.ts",
     "typecheck": "wrangler types -c wrangler.deploy.jsonc && tsc --noEmit && tsc --noEmit -p src/ui && tsc --noEmit -p test/e2e",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
