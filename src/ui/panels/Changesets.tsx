@@ -41,8 +41,8 @@ export function Changesets({
       </h2>
       {changesets.length === 0 ? (
         <p className="hint">
-          Each agent session opens a changeset: intent, claimed scope, and its
-          path to main.
+          No changesets yet. A session opens one, claims its scope, and sends
+          it to the merge queue.
         </p>
       ) : (
         <ul className="changeset-list">

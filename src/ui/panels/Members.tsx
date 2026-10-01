@@ -88,7 +88,7 @@ export function Members({ workspace, canAct, authLoading, signInHref }: MembersP
         <p className="hint">Loading members…</p>
       ) : members.length === 0 ? (
         <p className="hint">
-          No members yet — the first identity to write to this workspace becomes
+          No members yet. The first identity to write to this workspace becomes
           its owner.
         </p>
       ) : (
@@ -163,7 +163,7 @@ export function Members({ workspace, canAct, authLoading, signInHref }: MembersP
         <p className="hint">
           {authLoading
             ? "Checking identity…"
-            : "Member management needs an identity. "}
+            : "Changing membership needs an identity. "}
           {!authLoading && (
             <a className="signin" href={signInHref}>
               Sign in with GitHub

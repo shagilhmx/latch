@@ -9,8 +9,8 @@ export function LeaseMap({ leases, now }: { leases: Lease[]; now: number }) {
       </h2>
       {leases.length === 0 ? (
         <p className="hint">
-          No active leases. Agents claim file scope before editing — overlapping
-          claims are refused here, before any work happens.
+          No leases held. Claimed paths appear here with the agent holding
+          them and the deadline.
         </p>
       ) : (
         <table className="grid-table">

@@ -17,8 +17,7 @@ export function MergeStream({
       </h2>
       {stream.length === 0 ? (
         <p className="hint">
-          Claims, queue movement, verifications, and merges appear here the
-          moment the Coordinator mutates.
+          Nothing yet. Claims, verifications, and merges appear here in order.
         </p>
       ) : (
         <ol className="stream">
