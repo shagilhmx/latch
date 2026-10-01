@@ -5,6 +5,73 @@ import { LeaseMap } from "./panels/LeaseMap";
 import { MergeStream } from "./panels/MergeStream";
 import { useWorkspace } from "./useWorkspace";
 
+interface AuthUser {
+  id: string;
+  login: string;
+  avatarUrl?: string;
+}
+
+interface AuthState {
+  mode: "github" | "dev";
+  user: AuthUser | null;
+}
+
+/** Current identity (and auth mode) — fetched once; login reloads the page. */
+function useAuth(): AuthState | null {
+  const [auth, setAuth] = useState<AuthState | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/me")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => {
+        if (!cancelled && body !== null) setAuth(body as AuthState);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return auth;
+}
+
+function AuthBar({ auth }: { auth: AuthState | null }) {
+  if (auth === null) return null;
+
+  if (auth.mode === "github" && auth.user === null) {
+    return (
+      <a className="signin" href="/api/auth/login?next=/">
+        Sign in with GitHub
+      </a>
+    );
+  }
+
+  const user = auth.user;
+  return (
+    <div className="authbar">
+      {user?.avatarUrl !== undefined && user.avatarUrl.length > 0 ? (
+        <img className="avatar" src={user.avatarUrl} alt="" width={20} height={20} />
+      ) : null}
+      <span className="who">
+        {user?.login ?? "dev"}
+        {auth.mode === "dev" ? <span className="devchip">dev</span> : null}
+      </span>
+      {auth.mode === "github" ? (
+        <button
+          type="button"
+          className="signout"
+          onClick={() => {
+            void fetch("/api/auth/logout", { method: "POST" }).finally(() =>
+              window.location.reload(),
+            );
+          }}
+        >
+          Sign out
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function currentWorkspace(): string {
   const match = /^\/w\/([A-Za-z0-9_-]+)/.exec(window.location.pathname);
   return match?.[1] ?? "demo";
@@ -13,6 +80,7 @@ function currentWorkspace(): string {
 export default function App() {
   const workspace = currentWorkspace();
   const { snapshot, connection } = useWorkspace(workspace);
+  const auth = useAuth();
   const [now, setNow] = useState(() => Date.now());
 
   // One-second ticker keeps countdowns and relative times honest.
@@ -35,15 +103,18 @@ export default function App() {
             claims are refused before editing, so conflicts can&rsquo;t happen.
           </p>
         </div>
-        <div className="status" aria-live="polite">
-          <span className={`dot dot-${connection}`} aria-hidden="true" />
-          <span className="status-text">
-            {connection === "live"
-              ? "streaming"
-              : connection === "connecting"
-                ? "connecting…"
-                : "offline — polling"}
-          </span>
+        <div className="topbar-right">
+          <div className="status" aria-live="polite">
+            <span className={`dot dot-${connection}`} aria-hidden="true" />
+            <span className="status-text">
+              {connection === "live"
+                ? "streaming"
+                : connection === "connecting"
+                  ? "connecting…"
+                  : "offline — polling"}
+            </span>
+          </div>
+          <AuthBar auth={auth} />
         </div>
       </header>
 

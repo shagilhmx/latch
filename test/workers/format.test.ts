@@ -99,3 +99,43 @@ describe("streamable", () => {
     ).toBe(true);
   });
 });
+
+describe("auth and membership events", () => {
+  it("summarizes denials and membership changes for the stream", () => {
+    expect(
+      describeEvent({
+        seq: 1,
+        type: "auth.denied",
+        createdAt: NOW,
+        payload: { actor: "grace", action: "owner", code: "owner_required" },
+      }),
+    ).toBe("grace denied owner — owner_required");
+
+    expect(
+      describeEvent({
+        seq: 2,
+        type: "member.joined",
+        createdAt: NOW,
+        payload: { actor: "ada", role: "owner", via: "bootstrap" },
+      }),
+    ).toBe("ada joined as owner");
+
+    expect(
+      describeEvent({
+        seq: 3,
+        type: "member.updated",
+        createdAt: NOW,
+        payload: { actor: "linus", role: "write" },
+      }),
+    ).toBe("linus → write");
+
+    expect(
+      describeEvent({
+        seq: 4,
+        type: "member.removed",
+        createdAt: NOW,
+        payload: { actor: "mallory" },
+      }),
+    ).toBe("mallory removed from workspace");
+  });
+});

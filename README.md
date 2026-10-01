@@ -143,6 +143,29 @@ local git and the agent-execution route answers `503`.
    atomicity, expiry, serialization, violations, real-git merge/reject/conflict
    scenarios) and `npm run demo` end-to-end green.
 
+## Authentication & workspaces
+
+Two modes, decided by whether `AUTH_SECRET` is set:
+
+- **Dev mode** (local, tests — no secrets): every request is attributed to
+  a built-in `dev` identity; `POST /api/auth/dev {login}` switches identity
+  (the UI shows a `dev` chip). This keeps the demo and suite accountless.
+- **GitHub mode** (deployed): `GET /api/auth/login` → GitHub OAuth → signed
+  HttpOnly session cookie (HMAC-SHA256, 30 days). Anonymous requests can
+  read (the UI is a public monitor) but every mutation is refused with 401
+  before any state changes.
+
+Workspace roles mirror a public repository: **read** is open, **write**
+(claims, readiness, sessions) is for members, and **owner** covers
+configuration and membership (`PUT/DELETE /members`, last-owner protected).
+The first actor to touch a brand-new workspace bootstraps as its owner;
+owners add collaborators with `{userId, login, role}`. Denials surface in
+the live stream as `auth.denied` events, and the API layer overwrites the
+identity header on every request — clients cannot forge it.
+
+Deploy secrets: `AUTH_SECRET` (required — fail-closed),
+`GITHUB_CLIENT_SECRET`, and the `GITHUB_CLIENT_ID` var.
+
 ## Repository layout
 
 | Path | Purpose |
@@ -152,6 +175,7 @@ local git and the agent-execution route answers `503`.
 | `src/integration/{runner,git,cli}.ts` | Trusted integration runner: git-side verify → `--no-ff` merge → push |
 | `src/sessions/{runtime,local,session,sandbox,outbound}.ts` | Session orchestration; local git runtime + `AgentSandbox` container runtime |
 | `src/sdk/` | Agent SDK: typed HTTP client + session orchestration re-exports |
+| `src/worker/auth{,z}.ts` | Session cookies, GitHub OAuth, authorization policy |
 | `src/ui/` | React SPA (lease map, changesets, merge stream) with WebSocket store |
 | `container/` | `Dockerfile` (integration runner) + `Agent.Dockerfile` (agent CLI image) |
 | `scripts/demo.ts` | The 3-agent scripted demo |

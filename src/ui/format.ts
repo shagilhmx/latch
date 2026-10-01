@@ -84,6 +84,14 @@ export function describeEvent(event: CoordinationEvent): string {
       return `${short} forked ${String(payload["forkRepo"] ?? "")}`;
     case "workspace.configured":
       return `main → ${String(payload["mainRemote"] ?? "")}`;
+    case "auth.denied":
+      return `${String(payload["actor"] ?? "someone")} denied ${String(payload["action"] ?? "")} — ${String(payload["code"] ?? "forbidden")}`;
+    case "member.joined":
+      return `${String(payload["actor"] ?? "someone")} joined as ${String(payload["role"] ?? "member")}`;
+    case "member.updated":
+      return `${String(payload["actor"] ?? "someone")} → ${String(payload["role"] ?? "member")}`;
+    case "member.removed":
+      return `${String(payload["actor"] ?? "someone")} removed from workspace`;
     default:
       return event.type;
   }

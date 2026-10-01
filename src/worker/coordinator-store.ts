@@ -10,6 +10,7 @@
  * that property is the foundation of Latch's single-writer guarantee.
  */
 import type { Changeset, WorkspaceConfig, WorkspaceSnapshot } from "../shared/types";
+import { authMode, authorize, type Action, type Actor, type Role } from "./authz";
 import { HttpProblem } from "./http";
 import {
   MAX_RETAINED_EVENTS,
@@ -25,6 +26,13 @@ import {
   type LeaseWithAgentRow,
   type SqlParam,
 } from "./coordinator-types";
+
+export interface MemberRow {
+  user_id: string;
+  login: string;
+  role: string;
+  added_at: number;
+}
 
 export class CoordinatorStore {
   readonly state: DurableObjectState;
@@ -106,6 +114,14 @@ export class CoordinatorStore {
         created_at INTEGER NOT NULL
       );
     `);
+    this.state.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS members (
+        user_id TEXT PRIMARY KEY,
+        login TEXT NOT NULL,
+        role TEXT NOT NULL,
+        added_at INTEGER NOT NULL
+      );
+    `);
   }
 
   // ---------------------------------------------------------------- basics
@@ -137,6 +153,73 @@ export class CoordinatorStore {
 
   workspaceName(): string {
     return this.workspace;
+  }
+
+  // --------------------------------------------------------------- members
+
+  members(): MemberRow[] {
+    return this.sql<MemberRow>("SELECT * FROM members ORDER BY added_at ASC");
+  }
+
+  getMember(userId: string): MemberRow | undefined {
+    return this.sql<MemberRow>("SELECT * FROM members WHERE user_id = ?", userId)[0];
+  }
+
+  upsertMember(actor: Actor, role: Role): void {
+    this.exec(
+      `INSERT INTO members (user_id, login, role, added_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET login = excluded.login, role = excluded.role`,
+      actor.id,
+      actor.login,
+      role,
+      Date.now(),
+    );
+  }
+
+  removeMember(userId: string): boolean {
+    const existing = this.getMember(userId);
+    if (existing === undefined) return false;
+    this.exec("DELETE FROM members WHERE user_id = ?", userId);
+    return true;
+  }
+
+  /**
+   * Enforce authorization for a state-changing request. Throws an
+   * HttpProblem (401/403) when denied, emits `auth.denied` for the audit
+   * stream, and bootstraps the first actor of an empty workspace as owner.
+   */
+  authorize(actor: Actor | null, action: Action): void {
+    const members = this.members();
+    const memberRole =
+      actor !== null
+        ? ((members.find((m) => m.user_id === actor.id)?.role as Role | undefined) ?? null)
+        : null;
+    const result = authorize({
+      mode: authMode(this.env),
+      actor,
+      action,
+      memberRole,
+      memberCount: members.length,
+    });
+
+    if (!result.allowed) {
+      this.emit("auth.denied", {
+        action,
+        actor: actor?.login ?? "anonymous",
+        code: result.code,
+      });
+      throw new HttpProblem(result.status, result.code, result.message);
+    }
+    if (result.bootstrapOwner && actor !== null) {
+      this.upsertMember(actor, "owner");
+      this.emit("member.joined", { actor: actor.login, role: "owner", via: "bootstrap" });
+    } else if (actor !== null && memberRole !== null) {
+      // Keep the stored login fresh (GitHub logins can change).
+      const stored = members.find((m) => m.user_id === actor.id);
+      if (stored !== undefined && stored.login !== actor.login) {
+        this.upsertMember(actor, memberRole);
+      }
+    }
   }
 
   config(): WorkspaceConfig {

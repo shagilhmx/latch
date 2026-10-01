@@ -14,6 +14,7 @@
  * HTTP routes and the hibernated WebSocket stream to those modules.
  */
 import type { WireMessage } from "../shared/types";
+import type { Actor, Action } from "./authz";
 import {
   abortChangeset,
   attachFork,
@@ -30,9 +31,33 @@ import {
   verifyJob,
 } from "./coordinator-jobs";
 import { acquireLeases, heartbeat, releaseLeases, sweepExpired } from "./coordinator-leases";
+import { deleteMember, listMembers, putMember } from "./coordinator-members";
 import { CoordinatorStore } from "./coordinator-store";
 import { toEvent, type EventRow } from "./coordinator-types";
 import { HttpProblem, apiError, json } from "./http";
+
+/**
+ * Parse the worker-resolved identity header. The API layer overwrites (or
+ * removes) this header on every forwarded request, so clients cannot forge
+ * it by talking to the API directly.
+ */
+function readActor(request: Request): Actor | null {
+  const raw = request.headers.get("x-latch-user");
+  if (raw === null) return null;
+  try {
+    const parsed = JSON.parse(raw) as { id?: unknown; login?: unknown; avatarUrl?: unknown };
+    if (typeof parsed.id === "string" && typeof parsed.login === "string") {
+      return {
+        id: parsed.id,
+        login: parsed.login,
+        ...(typeof parsed.avatarUrl === "string" ? { avatarUrl: parsed.avatarUrl } : {}),
+      };
+    }
+  } catch {
+    // Fall through to anonymous.
+  }
+  return null;
+}
 
 export class Coordinator extends CoordinatorStore {
   async fetch(request: Request): Promise<Response> {
@@ -79,6 +104,19 @@ export class Coordinator extends CoordinatorStore {
     const method = request.method.toUpperCase();
     const segments = subpath.split("/").filter((s) => s.length > 0);
 
+    // Authorization: reads are open (the UI is a public monitor); every
+    // state-changing request must carry a worker-resolved actor (the header
+    // is set by the API layer from the session cookie — never trusted from
+    // clients). The integration queue and internal event routes are the
+    // trusted runner/system surface and skip user authz.
+    const isRead = method === "GET" || method === "HEAD";
+    const isSystem = segments[0] === "internal" || segments[0] === "integration";
+    if (!isRead && !isSystem) {
+      const action: Action =
+        segments[0] === "workspace" || segments[0] === "members" ? "owner" : "write";
+      this.authorize(readActor(request), action);
+    }
+
     if (method === "GET" && segments.length === 0) return json(this.snapshot());
 
     if (segments[0] === "workspace") {
@@ -113,6 +151,14 @@ export class Coordinator extends CoordinatorStore {
         if (action === "fork" && segments.length === 3 && method === "POST") {
           return attachFork(this, request, id);
         }
+      }
+    }
+
+    if (segments[0] === "members") {
+      if (segments.length === 1 && method === "GET") return listMembers(this);
+      if (segments.length === 1 && method === "PUT") return putMember(this, request);
+      if (segments.length === 2 && method === "DELETE") {
+        return deleteMember(this, decodeURIComponent(segments[1] ?? ""));
       }
     }
 
