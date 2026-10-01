@@ -38,6 +38,7 @@ interface ChangesetRow {
   status: string;
   fork_repo: string | null;
   fork_remote: string | null;
+  fork_token: string | null;
   ref: string | null;
   created_at: number;
   updated_at: number;
@@ -182,11 +183,18 @@ export class Coordinator {
         status TEXT NOT NULL,
         fork_repo TEXT,
         fork_remote TEXT,
+        fork_token TEXT,
         ref TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
     `);
+    // Upgrade guard for databases created before fork_token existed.
+    try {
+      this.state.storage.sql.exec("ALTER TABLE changesets ADD COLUMN fork_token TEXT");
+    } catch {
+      // Column already present.
+    }
     this.state.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS leases (
         path TEXT PRIMARY KEY,
@@ -748,11 +756,16 @@ export class Coordinator {
       const body = await readBody(request);
       const forkRepo = requireString(body, "forkRepo");
       const forkRemote = requireString(body, "forkRemote");
+      const forkToken =
+        typeof body["forkToken"] === "string" && body["forkToken"].length > 0
+          ? body["forkToken"]
+          : null;
       this.requireChangeset(changesetId);
       this.exec(
-        "UPDATE changesets SET fork_repo = ?, fork_remote = ?, updated_at = ? WHERE id = ?",
+        "UPDATE changesets SET fork_repo = ?, fork_remote = ?, fork_token = ?, updated_at = ? WHERE id = ?",
         forkRepo,
         forkRemote,
+        forkToken,
         Date.now(),
         changesetId,
       );
@@ -851,13 +864,14 @@ export class Coordinator {
       );
       this.emit("integration.claimed", { job: next.seq, changeset: next.changeset, ref: next.ref });
 
-      const changeset = this.requireChangeset(next.changeset);
+      const changeset = this.getChangesetRow(next.changeset);
       const config = this.config();
       const claimed: ClaimedJob = {
         ...toJob({ ...next, status: "running", started_at: now }),
         workspace: this.workspaceName(),
         mainRemote: config.mainRemote,
-        forkRemote: changeset.forkRemote,
+        forkRemote: changeset.fork_remote,
+        forkToken: changeset.fork_token,
         agent: changeset.agent,
         intent: changeset.intent,
       };

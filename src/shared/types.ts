@@ -53,6 +53,8 @@ export interface ClaimedJob extends IntegrationJob {
   workspace: string;
   mainRemote: string | null;
   forkRemote: string | null;
+  /** Write token for the session fork (never exposed in snapshots). */
+  forkToken: string | null;
   agent: string;
   intent: string;
 }

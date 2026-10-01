@@ -3,6 +3,7 @@
     "target": "ES2022",
     "module": "ES2022",
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
     "lib": ["ES2022"],
     "types": ["@cloudflare/vitest-pool-workers/types", "node"],
     "strict": true,
@@ -14,5 +15,13 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/worker", "src/shared", "test", "worker-configuration.d.ts"]
+  "include": [
+    "src/worker",
+    "src/shared",
+    "src/integration",
+    "src/sessions",
+    "scripts",
+    "test",
+    "worker-configuration.d.ts"
+  ]
 }

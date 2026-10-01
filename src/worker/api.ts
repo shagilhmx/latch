@@ -156,7 +156,11 @@ async function createSession(request: Request, env: Env, workspace: string): Pro
       env,
       workspace,
       `/changesets/${changeset.id}/fork`,
-      postJson("/changesets", { forkRepo: fork.repo, forkRemote: fork.remote }),
+      postJson("/changesets", {
+        forkRepo: fork.repo,
+        forkRemote: fork.remote,
+        forkToken: fork.token,
+      }),
     );
     if (!attachResponse.ok) {
       throw new HttpProblem(
