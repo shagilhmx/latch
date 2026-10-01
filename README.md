@@ -140,9 +140,10 @@ or client generator at it.
 
 **Live preview (deployed):** https://latch.latch-lab.workers.dev — the
 Coordinator Durable Object, queue consumer, SPA, and GitHub-mode auth run
-in production; `npm run live` drives a 13-check end-to-end run against it
-(sign a session with `LATCH_SESSION_SECRET`, claim → ready → runner merge
-→ WebSocket push). The preview is worker-only because **Artifacts and
+in production; `npm run live` drives a 15-check end-to-end run against it
+(sign a session with `LATCH_SESSION_SECRET`, arm the runner gate with
+`LATCH_RUNNER_TOKEN`, then: fail-closed runner 401s, claim → ready →
+runner merge → WebSocket push). The preview is worker-only because **Artifacts and
 Containers require the Workers Paid plan** (the account-level gate the
 competition rules already imply) — once upgraded, the full config
 deploys as-is.
@@ -270,7 +271,7 @@ token via `--runner-token`/`LATCH_RUNNER_TOKEN` (the CLI and SDK both send
 - ✅ Agent SDK + OpenAPI at `/api/openapi.json`
 - ✅ Auth: GitHub OAuth, signed sessions, workspace roles, dev bypass
 - ✅ Playwright E2E (5 flows) wired into CI alongside tests and the demo
-- ✅ Live deploy: worker preview at latch.latch-lab.workers.dev — 13-point
+- ✅ Live deploy: worker preview at latch.latch-lab.workers.dev — 15-point
   live e2e green (fail-closed 401, cookie auth, DO claim/queue/merge,
   WebSocket push); Artifacts + container deploy unlocks with Workers Paid
 - ✅ Improvements pass — runner auth (`RUNNER_TOKEN`, fail-closed),
