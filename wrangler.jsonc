@@ -1,0 +1,37 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "latch",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-08-15",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "queues": {
+    "consumers": [
+      {
+        "queue": "latch-artifacts-events",
+        "max_batch_size": 1,
+        "max_retries": 3
+      }
+    ]
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "COORDINATOR",
+        "class_name": "Coordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Coordinator"]
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
