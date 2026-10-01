@@ -8,6 +8,15 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
+  "queues": {
+    "consumers": [
+      {
+        "queue": "latch-artifacts-events",
+        "max_batch_size": 1,
+        "max_retries": 3
+      }
+    ]
+  },
   "durable_objects": {
     "bindings": [
       {

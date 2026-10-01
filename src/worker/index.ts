@@ -1,20 +1,8 @@
+import { handleApi } from "./api";
+import { handleArtifactsEvent } from "./events";
 import { Coordinator } from "./coordinator";
 
 export { Coordinator };
-
-const WORKSPACE_ROUTE = /^\/api\/workspaces\/([A-Za-z0-9_-]+)(\/.*)?$/;
-
-async function handleApi(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  const workspace = WORKSPACE_ROUTE.exec(url.pathname);
-
-  if (workspace !== null) {
-    const id = env.COORDINATOR.idFromName(workspace[1] ?? "default");
-    return env.COORDINATOR.get(id).fetch(request);
-  }
-
-  return Response.json({ error: "Not found" }, { status: 404 });
-}
 
 export default {
   async fetch(request, env): Promise<Response> {
@@ -25,5 +13,18 @@ export default {
     }
 
     return env.ASSETS.fetch(request);
+  },
+
+  /** Consumer for the `latch-artifacts-events` queue (event subscriptions). */
+  async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+    for (const message of batch.messages) {
+      try {
+        await handleArtifactsEvent(message.body, env);
+        message.ack();
+      } catch (error) {
+        console.error("Failed to handle Artifacts event", error);
+        message.retry();
+      }
+    }
   },
 } satisfies ExportedHandler<Env>;

@@ -215,3 +215,79 @@ describe("integration results", () => {
     expect(status).toBe(404);
   });
 });
+
+describe("session fork attachment and push events", () => {
+  it("records the fork on the changeset", async () => {
+    const w = workspaceApi();
+    const cs = await w.createChangeset("agent-a", "Forked session");
+    const { status, body } = await w.post(`/changesets/${cs}/fork`, {
+      forkRepo: "ws-demo.cs.abcd1234",
+      forkRemote: "https://artifacts.example/fork.git",
+    });
+    expect(status).toBe(200);
+    expect(body.changeset).toMatchObject({
+      forkRepo: "ws-demo.cs.abcd1234",
+      forkRemote: "https://artifacts.example/fork.git",
+    });
+    expect(await w.eventTypes()).toContain("session.forked");
+  });
+
+  it("enqueues on internal/pushed using held leases as the advisory set", async () => {
+    const w = workspaceApi();
+    const cs = await w.createChangeset("agent-a", "Agent pushed");
+    await w.post(`/changesets/${cs}/leases`, { paths: ["src/auto.ts"] });
+    await w.post(`/changesets/${cs}/fork`, {
+      forkRepo: "ws-auto.cs.aaaaaaaa",
+      forkRemote: "https://artifacts.example/auto.git",
+    });
+
+    const first = await w.post("/internal/pushed", {
+      repoName: "ws-auto.cs.aaaaaaaa",
+      ref: "f00dface00000000000000000000000000000000",
+    });
+    expect(first.status).toBe(202);
+    expect(first.body).toMatchObject({ queued: true });
+    expect(first.body.job).toMatchObject({ changeset: cs, status: "pending" });
+
+    const second = await w.post("/internal/pushed", {
+      repoName: "ws-auto.cs.aaaaaaaa",
+      ref: "f00dface00000000000000000000000000000001",
+    });
+    expect(second.body).toMatchObject({ queued: false, reason: "already_queued" });
+
+    const { body } = await w.get("/");
+    expect(body.jobs).toHaveLength(1);
+    expect(body.changesets[0].status).toBe("queued");
+  });
+
+  it("reports unknown and inactive repos without queueing", async () => {
+    const w = workspaceApi();
+    const unknown = await w.post("/internal/pushed", {
+      repoName: "ws-x.cs.ffffffff",
+      ref: "a".repeat(40),
+    });
+    expect(unknown.body).toMatchObject({ queued: false, reason: "no_matching_changeset" });
+
+    const cs = await w.createChangeset("agent-a", "Already merged");
+    await w.post(`/changesets/${cs}/fork`, {
+      forkRepo: "ws-y.cs.bbbbbbbb",
+      forkRemote: "https://artifacts.example/y.git",
+    });
+    await w.post(`/changesets/${cs}/leases`, { paths: ["src/m.ts"] });
+    await w.post(`/changesets/${cs}/ready`, { ref: "b".repeat(40), touchedPaths: ["src/m.ts"] });
+    const claimed = await w.get("/integration/next");
+    await w.post(`/integration/${claimed.body.job.seq}/result`, {
+      status: "merged",
+      mergedSha: "c".repeat(40),
+    });
+
+    const inactive = await w.post("/internal/pushed", {
+      repoName: "ws-y.cs.bbbbbbbb",
+      ref: "d".repeat(40),
+    });
+    expect(inactive.body).toMatchObject({
+      queued: false,
+      reason: "changeset_merged",
+    });
+  });
+});

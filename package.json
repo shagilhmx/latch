@@ -10,8 +10,8 @@
     "dev": "concurrently -k -n ui,api \"npm:dev:ui\" \"npm:dev:api\"",
     "dev:ui": "vite build --watch",
     "dev:api": "wrangler dev",
-    "deploy": "npm run build && wrangler deploy",
-    "typecheck": "wrangler types && tsc --noEmit && tsc --noEmit -p src/ui",
+    "deploy": "npm run build && wrangler deploy -c wrangler.deploy.jsonc",
+    "typecheck": "wrangler types -c wrangler.deploy.jsonc && tsc --noEmit && tsc --noEmit -p src/ui",
     "test": "npm run build && vitest run",
     "test:watch": "npm run build && vitest",
     "check": "npm run typecheck && npm test"

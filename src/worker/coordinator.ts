@@ -1,6 +1,5 @@
 import { normalizePath, normalizePaths } from "../shared/paths";
 import type {
-  ApiError,
   Changeset,
   ChangesetStatus,
   ClaimedJob,
@@ -13,6 +12,14 @@ import type {
   WorkspaceSnapshot,
   WireMessage,
 } from "../shared/types";
+import {
+  HttpProblem,
+  apiError,
+  json,
+  readBody,
+  requireString,
+  requireStringArray,
+} from "./http";
 
 /** Values bindable in the DO's SQLite statements. */
 type SqlParam = string | number | null;
@@ -70,56 +77,6 @@ interface EventRow {
   created_at: number;
 }
 
-function json(data: unknown, status = 200): Response {
-  return Response.json(data, { status });
-}
-
-function apiError(
-  status: number,
-  error: string,
-  message: string,
-  extra: Partial<ApiError> = {},
-): Response {
-  return json({ error, message, ...extra } satisfies ApiError, status);
-}
-
-function isApiError(value: unknown): value is ApiError {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as ApiError).error === "string" &&
-    typeof (value as ApiError).message === "string"
-  );
-}
-
-async function readBody(request: Request): Promise<Record<string, unknown>> {
-  try {
-    const body: unknown = await request.json();
-    if (typeof body !== "object" || body === null || Array.isArray(body)) {
-      throw new Error("body must be a JSON object");
-    }
-    return body as Record<string, unknown>;
-  } catch {
-    throw new HttpProblem(400, "invalid_body", "Request body must be a JSON object");
-  }
-}
-
-function requireString(body: Record<string, unknown>, field: string): string {
-  const value = body[field];
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new HttpProblem(400, "invalid_field", `"${field}" must be a non-empty string`);
-  }
-  return value.trim();
-}
-
-function requireStringArray(body: Record<string, unknown>, field: string): string[] {
-  const value = body[field];
-  if (!Array.isArray(value) || value.length === 0 || value.some((v) => typeof v !== "string")) {
-    throw new HttpProblem(400, "invalid_field", `"${field}" must be a non-empty string array`);
-  }
-  return value as string[];
-}
-
 function optionalTtlSeconds(body: Record<string, unknown>): number {
   const value = body["ttlSeconds"];
   if (value === undefined) return DEFAULT_LEASE_TTL_SECONDS;
@@ -135,18 +92,6 @@ function optionalTtlSeconds(body: Record<string, unknown>): number {
     );
   }
   return ttl;
-}
-
-class HttpProblem extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-    readonly extra: Partial<ApiError> = {},
-  ) {
-    super(message);
-    this.name = "HttpProblem";
-  }
 }
 
 function toChangeset(row: ChangesetRow): Changeset {
@@ -391,7 +336,19 @@ export class Coordinator {
         if (action === "abort" && segments.length === 3 && method === "POST") {
           return this.abortChangeset(id);
         }
+        if (action === "fork" && segments.length === 3 && method === "POST") {
+          return this.attachFork(request, id);
+        }
       }
+    }
+
+    if (
+      segments[0] === "internal" &&
+      segments[1] === "pushed" &&
+      segments.length === 2 &&
+      method === "POST"
+    ) {
+      return this.pushedByEvent(request);
     }
 
     if (segments[0] === "integration") {
@@ -725,7 +682,24 @@ export class Coordinator {
 
       // Early advisory check against claimed leases. The authoritative check
       // runs again in verifyJob() against paths derived from git itself.
-      const violations = touched.filter((path) => {
+      const job = this.enqueueJob(changeset.id, ref, touched, "ready");
+      return json({ job: toJob(job), changeset: this.requireChangeset(changesetId) }, 202);
+    })();
+  }
+
+  /**
+   * Shared enqueue core for the ready endpoint and the push-event consumer.
+   * The advisory lease check runs only when `paths` is provided; event-driven
+   * pushes fall through to the runner's authoritative verify instead.
+   */
+  private enqueueJob(
+    changesetId: string,
+    ref: string,
+    paths: string[] | null,
+    via: string,
+  ): JobRow {
+    if (paths !== null) {
+      const violations = paths.filter((path) => {
         const rows = this.sql<{ changeset: string }>(
           "SELECT changeset FROM leases WHERE path = ?",
           path,
@@ -741,30 +715,89 @@ export class Coordinator {
           { violations },
         );
       }
+    }
 
-      const now = Date.now();
+    const now = Date.now();
+    this.exec(
+      "UPDATE changesets SET status = 'queued', ref = ?, updated_at = ? WHERE id = ?",
+      ref,
+      now,
+      changesetId,
+    );
+    this.exec(
+      "INSERT INTO jobs (changeset, ref, status, enqueued_at) VALUES (?, ?, 'pending', ?)",
+      changesetId,
+      ref,
+      now,
+    );
+    this.emit("changeset.ready", { changeset: changesetId, ref, paths, via });
+
+    const job = this.sql<JobRow>(
+      "SELECT * FROM jobs WHERE changeset = ? ORDER BY seq DESC LIMIT 1",
+      changesetId,
+    )[0];
+    if (job === undefined) {
+      throw new HttpProblem(500, "internal", "Job insert did not persist");
+    }
+    return job;
+  }
+
+  /** Records the Artifacts session fork created for a changeset. */
+  private attachFork(request: Request, changesetId: string): Promise<Response> {
+    return (async () => {
+      const body = await readBody(request);
+      const forkRepo = requireString(body, "forkRepo");
+      const forkRemote = requireString(body, "forkRemote");
+      this.requireChangeset(changesetId);
       this.exec(
-        "UPDATE changesets SET status = 'queued', ref = ?, updated_at = ? WHERE id = ?",
-        ref,
-        now,
+        "UPDATE changesets SET fork_repo = ?, fork_remote = ?, updated_at = ? WHERE id = ?",
+        forkRepo,
+        forkRemote,
+        Date.now(),
         changesetId,
       );
-      this.exec(
-        "INSERT INTO jobs (changeset, ref, status, enqueued_at) VALUES (?, ?, 'pending', ?)",
-        changesetId,
-        ref,
-        now,
-      );
-      this.emit("changeset.ready", { changeset: changesetId, ref, paths: touched });
+      this.emit("session.forked", { changeset: changesetId, forkRepo });
+      return json({ changeset: this.requireChangeset(changesetId) });
+    })();
+  }
 
-      const job = this.sql<JobRow>(
-        "SELECT * FROM jobs WHERE changeset = ? ORDER BY seq DESC LIMIT 1",
-        changesetId,
-      )[0];
-      if (job === undefined) {
-        throw new HttpProblem(500, "internal", "Job insert did not persist");
+  /**
+   * Called by the queue consumer when an agent pushes to its session fork:
+   * enqueues integration automatically, using the changeset's held leases as
+   * the advisory path set (the runner's verify stays authoritative).
+   */
+  private pushedByEvent(request: Request): Promise<Response> {
+    return (async () => {
+      const body = await readBody(request);
+      const repoName = requireString(body, "repoName");
+      const ref = requireString(body, "ref");
+
+      const rows = this.sql<ChangesetRow>(
+        "SELECT * FROM changesets WHERE fork_repo = ? ORDER BY created_at DESC LIMIT 1",
+        repoName,
+      );
+      const changeset = rows[0];
+      if (changeset === undefined) {
+        return json({ queued: false, reason: "no_matching_changeset" }, 202);
       }
-      return json({ job: toJob(job), changeset: this.requireChangeset(changesetId) }, 202);
+      const activeJob = this.sql<{ seq: number }>(
+        "SELECT seq FROM jobs WHERE changeset = ? AND status IN ('pending', 'running') LIMIT 1",
+        changeset.id,
+      );
+      if (activeJob.length > 0) {
+        return json({ queued: false, reason: "already_queued" }, 202);
+      }
+      if (!ACTIVE_STATUSES.has(changeset.status)) {
+        return json({ queued: false, reason: `changeset_${changeset.status}` }, 202);
+      }
+
+      const held = this.sql<{ path: string }>(
+        "SELECT path FROM leases WHERE changeset = ? ORDER BY path ASC",
+        changeset.id,
+      ).map((row) => row.path);
+
+      const job = this.enqueueJob(changeset.id, ref, held.length > 0 ? held : null, "push");
+      return json({ queued: true, job: toJob(job) }, 202);
     })();
   }
 

@@ -1,0 +1,55 @@
+// Deploy-time configuration. Identical to wrangler.jsonc plus the Artifacts
+// binding, which (open beta) only supports the remote service — local dev and
+// tests use wrangler.jsonc so they run without a Cloudflare account.
+//
+// One-time account setup (see README):
+//   npx wrangler artifacts namespaces create latch
+//   npx wrangler queues create latch-artifacts-events
+//   npx wrangler queues subscription create latch-artifacts-events \
+//     --source artifacts --events cf.artifacts.repo.pushed
+//   npx wrangler deploy -c wrangler.deploy.jsonc
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "latch",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-08-15",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "artifacts": [
+    {
+      "binding": "ARTIFACTS",
+      "namespace": "latch",
+      // Always remote in local dev too; deploying is the only supported path.
+      "remote": true
+    }
+  ],
+  "queues": {
+    "consumers": [
+      {
+        "queue": "latch-artifacts-events",
+        "max_batch_size": 1,
+        "max_retries": 3
+      }
+    ]
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "COORDINATOR",
+        "class_name": "Coordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Coordinator"]
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

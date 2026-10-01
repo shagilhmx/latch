@@ -70,3 +70,45 @@ describe("workspace snapshot", () => {
     expect(status).toBe(404);
   });
 });
+
+describe("session and setup routes", () => {
+  it("creates a changeset in local mode when Artifacts is not bound", async () => {
+    const w = workspaceApi();
+    const { status, body } = await w.post("/sessions", {
+      agent: "agent-local",
+      intent: "Local-mode session",
+    });
+    expect(status).toBe(201);
+    expect(body.mode).toBe("local");
+    expect(body.fork).toBeNull();
+    expect(body.token).toBeNull();
+    expect(body.changeset).toMatchObject({ agent: "agent-local", status: "open" });
+
+    const snapshot = await w.get("/");
+    expect(snapshot.body.changesets).toHaveLength(1);
+  });
+
+  it("explains that setup needs the deploy config when Artifacts is absent", async () => {
+    const w = workspaceApi();
+    const { status, body } = await w.put("/setup", {});
+    expect(status).toBe(503);
+    expect(body.error).toBe("artifacts_unavailable");
+    expect(body.message).toContain("wrangler.deploy.jsonc");
+  });
+
+  it("rejects invalid session input", async () => {
+    const w = workspaceApi();
+    const { status } = await w.post("/sessions", { agent: "agent-a" });
+    expect(status).toBe(400);
+  });
+
+  it("rejects invalid workspace names on artifacts-backed routes", async () => {
+    const response = await SELF.fetch(
+      "https://latch.test/api/workspaces/bad.name/setup",
+      { method: "PUT", headers: { "content-type": "application/json" }, body: "{}" },
+    );
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBe("invalid_workspace");
+  });
+});
