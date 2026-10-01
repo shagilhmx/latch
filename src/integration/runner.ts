@@ -1,4 +1,5 @@
 import type { ClaimedJob } from "../shared/types.ts";
+import { runnerHeaders } from "../shared/runner-token.ts";
 import { bearer, git } from "./git.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,6 +12,9 @@ export interface RunnerOptions {
   workspace: string;
   /** Artifacts write token for the workspace (main) repo, if remote. */
   workspaceToken?: string | null;
+  /** RUNNER_TOKEN secret of the worker — required once the worker is deployed
+   * with a token configured (sent as `x-latch-runner-token`). */
+  runnerToken?: string | null;
   /** Keep the scratch clone around for debugging. */
   keepWorkdir?: boolean;
 }
@@ -26,9 +30,13 @@ async function call(
   init?: RequestInit,
 ): Promise<Response> {
   const origin = options.baseUrl.replace(/\/$/, "");
+  const headers = new Headers(init?.headers);
+  for (const [name, value] of Object.entries(runnerHeaders(options.runnerToken))) {
+    headers.set(name, value);
+  }
   return fetch(
     `${origin}/api/workspaces/${encodeURIComponent(options.workspace)}${path}`,
-    init,
+    { ...init, headers },
   );
 }
 
@@ -83,7 +91,9 @@ async function report(
   const response = await call(
     options,
     `/integration/${job.seq}/result`,
-    post(result),
+    // Echo the claim's attempt: if the job went stale and was re-claimed,
+    // this report belongs to a dead claim and the Coordinator refuses it.
+    post({ ...result, attempt: job.attempt }),
   );
   if (!response.ok) {
     throw new Error(`result report failed: ${response.status} ${await response.text()}`);
@@ -145,7 +155,7 @@ async function integrate(job: ClaimedJob, options: RunnerOptions): Promise<RunOu
     const verify = await call(
       options,
       `/integration/${job.seq}/verify`,
-      post({ paths: changed }),
+      post({ paths: changed, attempt: job.attempt }),
     );
     if (verify.status === 409) {
       const body = (await verify.json()) as { message?: string };

@@ -97,6 +97,62 @@ test("shows the current identity and reflects a dev login switch", async ({
   });
 });
 
+test("claims scope from the UI and aborts it (streamed, no reload)", async ({
+  page,
+}) => {
+  const errors = trackErrors(page);
+  await page.goto("/");
+  await expect(page.locator(".status-text")).toHaveText("streaming");
+
+  const stamp = Date.now().toString(36);
+  const agent = `ui-${stamp}`;
+  const path = `src/e2e-${stamp}.ts`;
+  await page.getByLabel("Agent").fill(agent);
+  await page.getByLabel("Intent").fill("Claimed from the UI action panel");
+  await page.getByLabel("Paths to lease").fill(path);
+  await page.getByRole("button", { name: "Claim scope" }).click();
+
+  // The changeset and its lease appear over the WebSocket — no reload.
+  const item = page
+    .getByRole("article", { name: /Changesets/ })
+    .locator("li", { hasText: agent })
+    .first();
+  await expect(item).toBeVisible({ timeout: 5_000 });
+  await expect(item).toContainText(path);
+  await expect(
+    page.getByRole("article", { name: /Lease map/ }),
+  ).toContainText(path, { timeout: 5_000 });
+
+  // Abort releases the lease and closes the changeset, also streamed.
+  await item.getByRole("button", { name: /Abort/ }).click();
+  await expect(item.locator(".chip")).toHaveText("aborted", { timeout: 5_000 });
+  await expect(
+    page.getByRole("article", { name: /Lease map/ }),
+  ).not.toContainText(path, { timeout: 5_000 });
+  expect(errors).toEqual([]);
+});
+
+test("manages workspace members from the UI", async ({ page }) => {
+  const errors = trackErrors(page);
+  await page.goto("/");
+  await expect(page.locator(".status-text")).toHaveText("streaming");
+
+  const stamp = Date.now().toString(36);
+  const members = page.getByRole("article", { name: /Members/ });
+  await members.getByLabel("User ID").fill(`uid-${stamp}`);
+  await members.getByLabel("Login").fill(`login-${stamp}`);
+  await members.getByLabel("Role").selectOption("write");
+  await members.getByRole("button", { name: "Add member" }).click();
+
+  const row = members.locator(".member", { hasText: `login-${stamp}` });
+  await expect(row).toBeVisible({ timeout: 5_000 });
+  await expect(row).toContainText("write");
+
+  await row.getByRole("button", { name: `Remove login-${stamp}` }).click();
+  await expect(row).toHaveCount(0, { timeout: 5_000 });
+  expect(errors).toEqual([]);
+});
+
 test("has no horizontal overflow on a 390px mobile viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");

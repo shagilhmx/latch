@@ -1,7 +1,8 @@
 /**
  * Live end-to-end check against a DEPLOYED Latch worker.
  *
- *   LATCH_SESSION_SECRET=<worker AUTH_SECRET> node scripts/live.ts [baseUrl]
+ *   LATCH_SESSION_SECRET=<worker AUTH_SECRET> \
+ *   LATCH_RUNNER_TOKEN=<worker RUNNER_TOKEN> node scripts/live.ts [baseUrl]
  *
  * Signs a session cookie locally (same HMAC scheme as src/worker/auth.ts),
  * injects it into every fetch, and drives the full coordination loop
@@ -157,7 +158,11 @@ async function main(): Promise<void> {
     changesetId: started.changeset.id,
     timeoutMs: 30_000,
   });
-  const outcome = await runOnce({ baseUrl, workspace: WORKSPACE });
+  const outcome = await runOnce({
+    baseUrl,
+    workspace: WORKSPACE,
+    runnerToken: process.env.LATCH_RUNNER_TOKEN ?? null,
+  });
   check(outcome.status === "merged", "runner merged the session into main");
   const verdict = await waiting;
   check(verdict.status === "merged", "awaitIntegration reported the merged verdict");

@@ -6,12 +6,41 @@
  * between its statements and a Durable Object handles one request at a
  * time, so at most one job is ever `running` — the serialization point for
  * every writer of `main`.
+ *
+ * Stale recovery: a runner can die mid-job (crash, redeploy, lost
+ * container). A `running` job older than JOB_TIMEOUT_MS is requeued for the
+ * next poller instead of wedging the queue forever; after MAX_JOB_ATTEMPTS
+ * claims the job is rejected so the changeset returns to its agent. Because
+ * a stale runner may still be alive, verify/result echo the `attempt` they
+ * were claimed with — reports from a previous claim are refused (409).
  */
 import { leaseCovers, normalizePaths } from "../shared/paths";
 import type { ClaimedJob } from "../shared/types";
 import { HttpProblem, json, readBody, requireString, requireStringArray } from "./http";
 import { ACTIVE_STATUSES, toJob, type ChangesetRow, type JobRow } from "./coordinator-types";
 import type { CoordinatorStore } from "./coordinator-store";
+
+/** How long a `running` job may go without reporting before it is requeued. */
+export const JOB_TIMEOUT_MS = 5 * 60_000;
+/** Claim cap per job: after this many claims a stalled job is rejected. */
+export const MAX_JOB_ATTEMPTS = 3;
+
+/**
+ * Refuse a verify/result report issued from a previous claim of the job.
+ * `attempt` is optional in the body for backward compatibility — clients
+ * that do not echo it are still bound to the running row by status.
+ */
+function requireCurrentAttempt(job: JobRow, body: Record<string, unknown>): void {
+  const echo = body["attempt"];
+  if (echo === undefined) return;
+  if (typeof echo !== "number" || !Number.isInteger(echo) || echo !== job.attempts) {
+    throw new HttpProblem(
+      409,
+      "stale_attempt",
+      `Job ${job.seq} is on attempt ${job.attempts}; this report is from attempt ${String(echo)}`,
+    );
+  }
+}
 
 export function markReady(
   store: CoordinatorStore,
@@ -157,29 +186,80 @@ export function pushedByEvent(store: CoordinatorStore, request: Request): Promis
  */
 export function claimNextJob(store: CoordinatorStore): Promise<Response> {
   return (async () => {
-    const running = store.sql<{ seq: number }>(
-      "SELECT seq FROM jobs WHERE status = 'running' LIMIT 1",
-    );
-    if (running.length > 0) return new Response(null, { status: 204 });
+    const now = Date.now();
+
+    // Stale recovery: a `running` job whose runner died would otherwise
+    // wedge the queue forever. Past JOB_TIMEOUT_MS it goes back to pending
+    // and is reclaimed below; once it has been claimed MAX_JOB_ATTEMPTS
+    // times it is rejected instead of looping, returning the changeset to
+    // its agent (leases kept, exactly like a verify rejection).
+    const running = store.sql<JobRow>("SELECT * FROM jobs WHERE status = 'running' LIMIT 1")[0];
+    if (running !== undefined) {
+      const startedAt = running.started_at ?? now;
+      if (now - startedAt <= JOB_TIMEOUT_MS) return new Response(null, { status: 204 });
+
+      if (running.attempts >= MAX_JOB_ATTEMPTS) {
+        const reason = `integration timed out after ${running.attempts} attempts`;
+        store.exec(
+          "UPDATE jobs SET status = 'rejected', reason = ?, finished_at = ? WHERE seq = ?",
+          reason,
+          now,
+          running.seq,
+        );
+        store.exec(
+          "UPDATE changesets SET status = 'rejected', updated_at = ? WHERE id = ?",
+          now,
+          running.changeset,
+        );
+        store.emit("integration.rejected", {
+          job: running.seq,
+          changeset: running.changeset,
+          reason,
+        });
+      } else {
+        store.exec(
+          "UPDATE jobs SET status = 'pending', started_at = NULL WHERE seq = ?",
+          running.seq,
+        );
+        store.emit("integration.requeued", {
+          job: running.seq,
+          changeset: running.changeset,
+          attempt: running.attempts,
+          timeoutMs: JOB_TIMEOUT_MS,
+        });
+      }
+      // Fall through: the requeued job is now the oldest pending row and is
+      // claimed again immediately (its attempt counter is what stops loops).
+    }
 
     const next = store.sql<JobRow>(
       "SELECT * FROM jobs WHERE status = 'pending' ORDER BY seq ASC LIMIT 1",
     )[0];
     if (next === undefined) return new Response(null, { status: 204 });
 
-    const now = Date.now();
-    store.exec("UPDATE jobs SET status = 'running', started_at = ? WHERE seq = ?", now, next.seq);
+    const attempt = next.attempts + 1;
+    store.exec(
+      "UPDATE jobs SET status = 'running', started_at = ?, attempts = ? WHERE seq = ?",
+      now,
+      attempt,
+      next.seq,
+    );
     store.exec(
       "UPDATE changesets SET status = 'integrating', updated_at = ? WHERE id = ?",
       now,
       next.changeset,
     );
-    store.emit("integration.claimed", { job: next.seq, changeset: next.changeset, ref: next.ref });
+    store.emit("integration.claimed", {
+      job: next.seq,
+      changeset: next.changeset,
+      ref: next.ref,
+      attempt,
+    });
 
     const changeset = store.getChangesetRow(next.changeset);
     const config = store.config();
     const claimed: ClaimedJob = {
-      ...toJob({ ...next, status: "running", started_at: now }),
+      ...toJob({ ...next, status: "running", started_at: now, attempts: attempt }),
       workspace: store.workspaceName(),
       mainRemote: config.mainRemote,
       forkRemote: changeset.fork_remote,
@@ -205,6 +285,7 @@ export function verifyJob(
   return (async () => {
     const body = await readBody(request);
     const job = store.requireJob(seq, "running");
+    requireCurrentAttempt(job, body);
     let paths: string[];
     try {
       paths = normalizePaths(requireStringArray(body, "paths"));
@@ -258,6 +339,7 @@ export function reportJob(
     const body = await readBody(request);
     const status = requireString(body, "status");
     const job = store.requireJob(seq, "running");
+    requireCurrentAttempt(job, body);
     const now = Date.now();
 
     if (status === "merged") {

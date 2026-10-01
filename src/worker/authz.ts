@@ -16,7 +16,12 @@
  *  - `dev`    — local/test: no `AUTH_SECRET` configured, every request is
  *    attributed to the built-in `dev` actor (or a dev-switched identity),
  *    so the demo and the test suite run accountless.
+ *
+ * The file also holds runner authorization (`authorizeRunner`): the
+ * integration and internal routes are a *system* surface with no user
+ * actor, so they are gated by a shared secret instead — see below.
  */
+import { tokenEquals } from "../shared/runner-token.ts";
 
 export type AuthMode = "github" | "dev";
 export type Role = "read" | "write" | "owner";
@@ -100,4 +105,71 @@ export function authorize(input: {
   }
 
   return { allowed: true, bootstrapOwner: false };
+}
+
+// ------------------------------------------------------------ runner auth
+
+export interface RunnerEnv {
+  RUNNER_TOKEN?: string | undefined;
+  AUTH_SECRET?: string | undefined;
+}
+
+export type RunnerAuthzResult =
+  | { allowed: true }
+  | { allowed: false; status: 401 | 503; code: string; message: string };
+
+/**
+ * Authorization for the trusted system routes (`/integration/*`,
+ * `/internal/*`). A claim response carries the session fork's write token
+ * and verify/result gate merges into `main`, so these routes must never be
+ * reachable anonymously in production — even though they intentionally skip
+ * *user* authz (a runner is not a user).
+ *
+ * Policy, mirroring the modes above:
+ *  - `RUNNER_TOKEN` configured   → the request must present it (compared
+ *    in constant time), in either mode.
+ *  - not configured + dev mode   → open, so the demo and the test suite run
+ *    accountless.
+ *  - not configured + github mode → fail closed (503): a deployed worker
+ *    with session auth must not expose the queue until a token exists.
+ *
+ * `providedToken` is the raw `x-latch-runner-token` header value (null when
+ * absent); keeping it a plain argument keeps this function pure and
+ * unit-testable without HTTP.
+ */
+export async function authorizeRunner(
+  env: RunnerEnv,
+  providedToken: string | null,
+): Promise<RunnerAuthzResult> {
+  const configured = typeof env.RUNNER_TOKEN === "string" ? env.RUNNER_TOKEN.trim() : "";
+
+  if (configured.length === 0) {
+    if (authMode(env) === "dev") return { allowed: true };
+    return {
+      allowed: false,
+      status: 503,
+      code: "runner_token_not_configured",
+      message:
+        "Runner routes are disabled: set the RUNNER_TOKEN secret on the worker " +
+        "and pass it to the integration runner (--runner-token).",
+    };
+  }
+
+  if (providedToken === null) {
+    return {
+      allowed: false,
+      status: 401,
+      code: "runner_auth_required",
+      message: "Missing x-latch-runner-token header on a runner-only route",
+    };
+  }
+  if (!(await tokenEquals(providedToken, configured))) {
+    return {
+      allowed: false,
+      status: 401,
+      code: "runner_auth_invalid",
+      message: "Invalid runner token",
+    };
+  }
+  return { allowed: true };
 }

@@ -305,10 +305,13 @@ export const openapiSpec: Record<string, unknown> = {
           "Returns 204 when a job is running or none is pending — this " +
           "endpoint is the single-writer gate for `main`.",
         operationId: "claimNextJob",
+        security: [{ runnerToken: [] }],
         parameters: [{ $ref: "#/components/parameters/workspace" }],
         responses: {
           200: { description: "Claimed job with fork credentials" },
-          204: { description: "Idle / busy" },
+          204: { description: "Idle / busy (also: job running and not yet stale)" },
+          401: { description: "401 runner_auth_required / runner_auth_invalid" },
+          503: { description: "503 runner_token_not_configured (fail closed)" },
         },
       },
     },
@@ -321,6 +324,7 @@ export const openapiSpec: Record<string, unknown> = {
           "not agent-declared. Any path outside the job's live leases " +
           "rejects job AND changeset in the same turn (leases kept).",
         operationId: "verifyJob",
+        security: [{ runnerToken: [] }],
         parameters: [
           { $ref: "#/components/parameters/workspace" },
           { name: "seq", in: "path", required: true, schema: { type: "integer" } },
@@ -328,6 +332,7 @@ export const openapiSpec: Record<string, unknown> = {
         responses: {
           200: { description: "Verified" },
           409: { $ref: "#/components/responses/Conflict" },
+          401: { description: "401 runner_auth_required / runner_auth_invalid" },
         },
       },
     },
@@ -337,13 +342,17 @@ export const openapiSpec: Record<string, unknown> = {
         summary: "Report the integration result (runner only)",
         description:
           "`merged` releases the changeset's leases; `rejected` keeps them " +
-          "so the agent can fix within its scope and re-ready.",
-        operationId: "reportJob",
+          "so the agent can fix within its scope and re-ready.",        operationId: "reportJob",
+        security: [{ runnerToken: [] }],
         parameters: [
           { $ref: "#/components/parameters/workspace" },
           { name: "seq", in: "path", required: true, schema: { type: "integer" } },
         ],
-        responses: { 200: { description: "Recorded" }, 409: { $ref: "#/components/responses/Conflict" } },
+        responses: {
+          200: { description: "Recorded" },
+          409: { $ref: "#/components/responses/Conflict" },
+          401: { description: "401 runner_auth_required / runner_auth_invalid" },
+        },
       },
     },
     "/api/workspaces/{workspace}/sessions": {
@@ -370,6 +379,18 @@ export const openapiSpec: Record<string, unknown> = {
     },
   },
   components: {
+    securitySchemes: {
+      runnerToken: {
+        type: "apiKey",
+        in: "header",
+        name: "x-latch-runner-token",
+        description:
+          "Shared RUNNER_TOKEN secret required on runner-only routes " +
+          "(/integration/*, /internal/*) whenever the worker has one " +
+          "configured (always, in production). Dev mode without a token " +
+          "leaves them open for the local demo and test suite.",
+      },
+    },
     parameters: {
       workspace: {
         name: "workspace",
@@ -463,6 +484,13 @@ export const openapiSpec: Record<string, unknown> = {
           enqueuedAt: { type: "integer" },
           startedAt: { type: ["integer", "null"] },
           finishedAt: { type: ["integer", "null"] },
+          attempt: {
+            type: "integer",
+            description:
+              "Times the job has been claimed (1 = first run). A running job " +
+              "older than 5 minutes is requeued; after 3 attempts it is " +
+              "rejected. verify/result should echo this value.",
+          },
         },
       },
       Event: {

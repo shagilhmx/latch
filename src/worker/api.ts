@@ -20,13 +20,16 @@ function coordinatorFor(env: Env, workspace: string): DurableObjectStub {
  * Identity header for the Coordinator: resolved from the session cookie by
  * the Worker and OVERWRITTEN on every forwarded request, so a client can
  * never forge `x-latch-user` by sending it directly.
+ *
+ * Other caller headers (content-type, `x-latch-runner-token`, …) are
+ * preserved — the Coordinator validates anything it trusts from them.
  */
 async function actorHeaders(
   request: Request,
   env: Env,
   base?: HeadersInit,
 ): Promise<Headers> {
-  const headers = new Headers(base ?? undefined);
+  const headers = base === undefined ? new Headers(request.headers) : new Headers(base);
   headers.delete("x-latch-user");
   const { actor } = await resolveActor(request, env);
   if (actor !== null) {
@@ -37,7 +40,19 @@ async function actorHeaders(
 
 /** Same guarantee as `actorHeaders`, but for whole forwarded requests. */
 async function withActor(request: Request, env: Env): Promise<Request> {
-  return new Request(request, { headers: await actorHeaders(request, env) });
+  const headers = await actorHeaders(request, env);
+  // Read the body ONCE at the edge: constructing a derived Request moves the
+  // stream without consuming it, and workerd raises an uncaught TypeError
+  // ("Can't read from request stream after response has been sent") when the
+  // outer response completes. The Coordinator receives it as a plain string.
+  const body = request.body === null ? null : await request.text();
+  const method = request.method.toUpperCase();
+  const withBody = body !== null && method !== "GET" && method !== "HEAD";
+  return new Request(request.url, {
+    method,
+    headers,
+    ...(withBody ? { body } : {}),
+  });
 }
 
 async function forwardToCoordinator(

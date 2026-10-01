@@ -103,9 +103,19 @@ export class CoordinatorStore {
         merged_sha TEXT,
         enqueued_at INTEGER NOT NULL,
         started_at INTEGER,
-        finished_at INTEGER
+        finished_at INTEGER,
+        attempts INTEGER NOT NULL DEFAULT 0
       );
     `);
+    // Upgrade guard for databases created before attempts existed (stale
+    // job recovery reclaims a running job after JOB_TIMEOUT_MS).
+    try {
+      this.state.storage.sql.exec(
+        "ALTER TABLE jobs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+      );
+    } catch {
+      // Column already present.
+    }
     this.state.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS events (
         seq INTEGER PRIMARY KEY AUTOINCREMENT,

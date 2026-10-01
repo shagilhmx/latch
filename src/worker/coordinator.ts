@@ -14,7 +14,8 @@
  * HTTP routes and the hibernated WebSocket stream to those modules.
  */
 import type { WireMessage } from "../shared/types";
-import type { Actor, Action } from "./authz";
+import { RUNNER_TOKEN_HEADER } from "../shared/runner-token.ts";
+import { authorizeRunner, type Actor, type Action } from "./authz";
 import {
   abortChangeset,
   attachFork,
@@ -107,14 +108,23 @@ export class Coordinator extends CoordinatorStore {
     // Authorization: reads are open (the UI is a public monitor); every
     // state-changing request must carry a worker-resolved actor (the header
     // is set by the API layer from the session cookie — never trusted from
-    // clients). The integration queue and internal event routes are the
-    // trusted runner/system surface and skip user authz.
+    // clients).
     const isRead = method === "GET" || method === "HEAD";
     const isSystem = segments[0] === "internal" || segments[0] === "integration";
     if (!isRead && !isSystem) {
       const action: Action =
         segments[0] === "workspace" || segments[0] === "members" ? "owner" : "write";
       this.authorize(readActor(request), action);
+    }
+
+    // The integration queue and internal event routes are the trusted
+    // runner/system surface: no user actor, but they expose fork write
+    // tokens and gate merges into `main`, so they require the shared
+    // RUNNER_TOKEN instead (dev mode without a configured token stays
+    // open — see authorizeRunner).
+    if (isSystem) {
+      const runner = await authorizeRunner(this.env, request.headers.get(RUNNER_TOKEN_HEADER));
+      if (!runner.allowed) return apiError(runner.status, runner.code, runner.message);
     }
 
     if (method === "GET" && segments.length === 0) return json(this.snapshot());
@@ -146,7 +156,7 @@ export class Coordinator extends CoordinatorStore {
           return markReady(this, request, id);
         }
         if (action === "abort" && segments.length === 3 && method === "POST") {
-          return abortChangeset(this, id);
+          return abortChangeset(this, request, id);
         }
         if (action === "fork" && segments.length === 3 && method === "POST") {
           return attachFork(this, request, id);

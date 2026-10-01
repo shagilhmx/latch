@@ -12,6 +12,7 @@
     "dev:api": "wrangler dev",
     "deploy": "npm run build && wrangler deploy -c wrangler.deploy.jsonc",
     "integration": "node src/integration/cli.ts",
+    "mcp": "node src/mcp/server.ts",
     "demo": "npm run build && node scripts/demo.ts",
     "live": "node scripts/live.ts",
     "typecheck": "wrangler types -c wrangler.deploy.jsonc && tsc --noEmit && tsc --noEmit -p src/ui && tsc --noEmit -p test/e2e",
@@ -24,8 +25,11 @@
   },
   "dependencies": {
     "@cloudflare/sandbox": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "fast-check": "^4.10.2",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",

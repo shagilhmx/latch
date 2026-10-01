@@ -61,6 +61,7 @@ export interface JobRow {
   enqueued_at: number;
   started_at: number | null;
   finished_at: number | null;
+  attempts: number;
 }
 
 export interface EventRow {
@@ -112,6 +113,7 @@ export function toJob(row: JobRow): IntegrationJob {
     enqueuedAt: row.enqueued_at,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
+    attempt: row.attempts,
   };
 }
 

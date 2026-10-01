@@ -117,8 +117,16 @@ export function attachFork(
   })();
 }
 
-export function abortChangeset(store: CoordinatorStore, changesetId: string): Promise<Response> {
+export function abortChangeset(
+  store: CoordinatorStore,
+  request: Request,
+  changesetId: string,
+): Promise<Response> {
   return (async () => {
+    // Abort carries no payload, but callers forward one anyway — drain it so
+    // workerd doesn't raise "Can't read from request stream after response
+    // has been sent" when the response completes.
+    await request.body?.cancel().catch(() => undefined);
     const changeset = store.requireChangeset(changesetId);
     if (changeset.status === "merged" || changeset.status === "aborted") {
       throw new HttpProblem(409, "changeset_not_active", `Changeset is ${changeset.status}`);

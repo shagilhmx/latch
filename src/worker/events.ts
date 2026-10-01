@@ -1,3 +1,4 @@
+import { runnerHeaders } from "../shared/runner-token.ts";
 import { parseSessionRepo } from "./artifacts";
 
 /** Shape of a `cf.artifacts.repo.pushed` event (see Artifacts event docs). */
@@ -43,7 +44,9 @@ export async function handleArtifactsEvent(
   );
   const response = await coordinator.fetch(target.toString(), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      // The queue consumer is a system caller: when a RUNNER_TOKEN is
+      // configured it must present it, just like the integration runner.
+      headers: { "content-type": "application/json", ...runnerHeaders(env.RUNNER_TOKEN) },
       body: JSON.stringify({ repoName, ref }),
     },
   );
