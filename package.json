@@ -1,0 +1,35 @@
+{
+  "name": "latch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Latch — lease-based concurrency for agent teams, on Cloudflare Workers + Artifacts",
+  "license": "MIT",
+  "scripts": {
+    "build": "vite build",
+    "dev": "concurrently -k -n ui,api \"npm:dev:ui\" \"npm:dev:api\"",
+    "dev:ui": "vite build --watch",
+    "dev:api": "wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "typecheck": "wrangler types && tsc --noEmit && tsc --noEmit -p src/ui",
+    "test": "npm run build && vitest run",
+    "test:watch": "npm run build && vitest",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@types/node": "^26.6.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.2",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.146.0"
+  }
+}
