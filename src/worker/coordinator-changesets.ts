@@ -11,7 +11,6 @@ import {
   toEvent,
   toJob,
   toLease,
-  type ChangesetRow,
   type EventRow,
   type JobRow,
   type LeaseWithAgentRow,

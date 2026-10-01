@@ -32,7 +32,7 @@ import {
 import { acquireLeases, heartbeat, releaseLeases, sweepExpired } from "./coordinator-leases";
 import { CoordinatorStore } from "./coordinator-store";
 import { toEvent, type EventRow } from "./coordinator-types";
-import { HttpProblem, apiError, json, readBody, requireString } from "./http";
+import { HttpProblem, apiError, json } from "./http";
 
 export class Coordinator extends CoordinatorStore {
   async fetch(request: Request): Promise<Response> {
@@ -153,7 +153,7 @@ export class Coordinator extends CoordinatorStore {
 
   // ------------------------------------------------------------- websocket
 
-  private openStream(request: Request): Response {
+  private openStream(_request: Request): Response {
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
