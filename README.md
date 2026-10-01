@@ -109,18 +109,42 @@ or client generator at it.
 
 ### Deploy
 
+**Live preview (deployed):** https://latch.latch-lab.workers.dev — the
+Coordinator Durable Object, queue consumer, SPA, and GitHub-mode auth run
+in production; `npm run live` drives a 13-check end-to-end run against it
+(sign a session with `LATCH_SESSION_SECRET`, claim → ready → runner merge
+→ WebSocket push). The preview is worker-only because **Artifacts and
+Containers require the Workers Paid plan** (the account-level gate the
+competition rules already imply) — once upgraded, the full config
+deploys as-is.
+
 ```sh
-npx wrangler login
-# edit wrangler.deploy.jsonc: account id, gateway vars
-npx wrangler secret put AI_GATEWAY_TOKEN
-npm run deploy        # wrangler deploy -c wrangler.deploy.jsonc
+npx wrangler login              # OAuth (includes artifacts:write, containers:write)
+# wrangler.deploy.jsonc: AI_GATEWAY_ACCOUNT_ID, GITHUB_CLIENT_ID vars
+npx wrangler secret put AUTH_SECRET          # e.g. openssl rand -hex 32 | …
+npx wrangler secret put GITHUB_CLIENT_SECRET # from the GitHub OAuth app
+npx wrangler secret put AI_GATEWAY_TOKEN     # AI Gateway token for agent runs
+npm run deploy                 # build + worker + container image push
 ```
 
-Deploy needs Docker (the `AgentSandbox` container image) and a Workers Paid
-plan with Artifacts enabled. The local config (`wrangler.jsonc`) runs
-accountless: the coordinator, queue, runner, and UI all work in
-`wrangler dev`; with no Artifacts binding, session forking falls back to
-local git and the agent-execution route answers `503`.
+One-time account setup (what actually works with wrangler 4.146):
+
+- **workers.dev subdomain** — `PUT /accounts/:id/workers/subdomain`, or open
+  the Workers page in the dashboard once.
+- **Queue** — `npx wrangler queues create latch-artifacts-events`.
+- **Artifacts namespace** — created from the dashboard (Storage &
+  databases → Artifacts) or the REST API; there is no wrangler create
+  command. Requires Workers Paid.
+- **Push-event subscription** — `wrangler queues subscription create
+  latch-artifacts-events --source artifacts.repo --events
+  cf.artifacts.repo.pushed` (the API also requires `source.namespace` +
+  `source.repo_name`, so repo-scoped subscriptions are created per fork
+  repo once Artifacts is enabled).
+
+The local config (`wrangler.jsonc`) runs accountless: the coordinator,
+queue, runner, and UI all work in `wrangler dev`; with no Artifacts
+binding, session forking falls back to local git and the
+agent-execution route answers `503`.
 
 ## Demo video outline (5–10 min)
 
@@ -200,6 +224,9 @@ Deploy secrets: `AUTH_SECRET` (required — fail-closed),
 - ✅ Agent SDK + OpenAPI at `/api/openapi.json`
 - ✅ Auth: GitHub OAuth, signed sessions, workspace roles, dev bypass
 - ✅ Playwright E2E (5 flows) wired into CI alongside tests and the demo
+- ✅ Live deploy: worker preview at latch.latch-lab.workers.dev — 13-point
+  live e2e green (fail-closed 401, cookie auth, DO claim/queue/merge,
+  WebSocket push); Artifacts + container deploy unlocks with Workers Paid
 
 ## License
 

@@ -15,7 +15,7 @@
   "compatibility_date": "2026-08-15",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
-    "AI_GATEWAY_ACCOUNT_ID": "<YOUR_ACCOUNT_ID>",
+    "AI_GATEWAY_ACCOUNT_ID": "cf0093831f41bb3c321f8404855aea95",
     "AI_GATEWAY_ID": "default",
     "MODEL": "claude-sonnet-5",
     "GITHUB_CLIENT_ID": "<YOUR_GITHUB_OAUTH_CLIENT_ID>"

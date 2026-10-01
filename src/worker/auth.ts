@@ -8,8 +8,8 @@
  * dev / tests) every request is attributed to the built-in `dev` actor, and
  * `POST /api/auth/dev` switches identity for exercising permissions.
  */
-import { DEV_ACTOR, authMode, type Actor, type AuthMode } from "./authz";
-import { apiError, json, readBody, requireString } from "./http";
+import { DEV_ACTOR, authMode, type Actor, type AuthMode } from "./authz.ts";
+import { apiError, json, readBody, requireString } from "./http.ts";
 
 export const SESSION_COOKIE = "latch_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
