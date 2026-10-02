@@ -143,7 +143,10 @@ Coordinator Durable Object, queue consumer, SPA, and GitHub-mode auth run
 in production; `npm run live` drives a 15-check end-to-end run against it
 (sign a session with `LATCH_SESSION_SECRET`, arm the runner gate with
 `LATCH_RUNNER_TOKEN`, then: fail-closed runner 401s, claim → ready →
-runner merge → WebSocket push). The preview is worker-only because **Artifacts and
+runner merge → WebSocket push). GitHub Actions re-runs the same 15 checks
+weekly (`.github/workflows/live.yml`, manual dispatch too) from repository
+secrets, so a production regression shows up as a red run instead of at
+demo time. The preview is worker-only because **Artifacts and
 Containers require the Workers Paid plan** (the account-level gate the
 competition rules already imply) — once upgraded, the full config
 deploys as-is.

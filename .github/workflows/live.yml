@@ -1,0 +1,37 @@
+# Scheduled proof against the DEPLOYED worker (https://latch.latch-lab.workers.dev).
+#
+# The same 15-check run as `npm run live`, with repository secrets:
+# session auth (github mode, fail-closed), the RUNNER_TOKEN gate on
+# /integration and /internal, a real Durable Object claim → ready →
+# runner merge with trailers, and a WebSocket push.
+#
+# Required repository secrets:
+#   LATCH_SESSION_SECRET  -> the worker's AUTH_SECRET
+#   LATCH_RUNNER_TOKEN    -> the worker's RUNNER_TOKEN
+#
+# Secrets must match the LIVE worker: rotating either secret without
+# updating the repository secret turns this run red (by design).
+name: live e2e (production)
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+jobs:
+  live:
+    name: 15-point live run
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Run the live e2e against the deployed worker
+        env:
+          LATCH_SESSION_SECRET: ${{ secrets.LATCH_SESSION_SECRET }}
+          LATCH_RUNNER_TOKEN: ${{ secrets.LATCH_RUNNER_TOKEN }}
+        run: node scripts/live.ts
