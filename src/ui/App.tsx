@@ -107,8 +107,8 @@ export default function App() {
             Latch <span className="workspace">/{workspace}</span>
           </h1>
           <p className="tagline">
-            Agents don&rsquo;t get branches &mdash; they get leases. Overlapping
-            claims are refused before editing, so conflicts can&rsquo;t happen.
+            Agents don&rsquo;t get branches; they get leases. Overlapping
+            claims are refused before anyone edits.
           </p>
         </div>
         <div className="topbar-right">
@@ -119,7 +119,7 @@ export default function App() {
                 ? "streaming"
                 : connection === "connecting"
                   ? "connecting…"
-                  : "offline — polling"}
+                  : "offline, polling"}
             </span>
           </div>
           <AuthBar auth={auth} />
@@ -135,9 +135,9 @@ export default function App() {
 
       {snapshot === null ? (
         <section className="panel" aria-busy="true">
-          <h2>Waiting for workspace…</h2>
+          <h2>Waiting for the workspace…</h2>
           <p className="hint">
-            The Coordinator streams a snapshot as soon as it answers.
+            The first snapshot arrives as soon as the Coordinator answers.
           </p>
         </section>
       ) : (
@@ -169,9 +169,8 @@ export default function App() {
 
       <footer>
         <p>
-          Submission for Cloudflare&rsquo;s Build the Next-Gen Git Platform
-          challenge. Live state comes from a Durable Object over WebSocket;
-          every claim, denial, verification, and merge is an event.
+          One Durable Object per workspace holds every lease and the merge
+          queue; this page streams from it over WebSocket.
         </p>
       </footer>
     </main>

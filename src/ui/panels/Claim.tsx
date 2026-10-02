@@ -61,7 +61,7 @@ export function Claim({
         <p className="hint">
           {authLoading
             ? "Checking identity…"
-            : "Reading is public, but claiming leases needs an identity. "}
+            : "Claiming needs an identity; reading stays open. "}
           {!authLoading && (
             <a className="signin" href={signInHref}>
               Sign in with GitHub
@@ -128,7 +128,8 @@ export function Claim({
         Claim scope <span className="count">changeset + leases in one step</span>
       </h2>
       <p className="hint">
-        Overlapping claims are refused here, before any editing happens.
+        One call opens the changeset and takes the leases; a held path comes
+        back as a conflict.
       </p>
       <form className="form-grid" onSubmit={(event) => void submit(event)}>
         <div className="form-row">
